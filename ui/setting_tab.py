@@ -48,6 +48,71 @@ def readonly_value_box(text):
     return lbl
 
 
+# Cấu hình hiển thị cho từng loại lịch trong màn hình Tổng quan
+SCHEDULE_CATEGORIES = [
+    # key,        icon,   tiêu đề,        đơn vị,   màu chủ đạo, màu nền nhạt
+    ("cho_an",    "🍽️",  "Cho ăn",       "gram",   "#e8963c",  "#fff6e9"),
+    ("tam",       "🚿",   "Tắm",          "giây",   "#1857a4",  "#e9f0fb"),
+    ("rua_chuong","🧹",   "Rửa chuồng",   "giây",   "#2f8f4e",  "#eaf7ee"),
+]
+
+
+def build_schedule_card(icon, title, unit, color, bg, rows):
+    """Dựng 1 thẻ (card) hiển thị lịch cho 1 loại hoạt động, đẹp hơn hẳn so với
+    kiểu liệt kê chữ đơn giản trước đây — mỗi mốc giờ là 1 "chip" màu + dòng
+    riêng biệt, có viền và màu nền theo từng loại hoạt động."""
+    card = QFrame()
+    card.setStyleSheet(
+        f"QFrame {{ background:{bg}; border:1px solid {color}; border-radius:10px; }}"
+    )
+    lay = QVBoxLayout(card)
+    lay.setContentsMargins(14, 12, 14, 14)
+    lay.setSpacing(8)
+
+    header = QLabel(f"{icon}  {title.upper()}")
+    header.setStyleSheet(
+        f"font-weight:800; font-size:13px; color:{color}; background:transparent; border:none;"
+    )
+    lay.addWidget(header)
+
+    if not rows:
+        empty = QLabel("Chưa có lịch nào được cài đặt")
+        empty.setStyleSheet("color:#999; font-size:11px; font-style:italic; background:transparent; border:none;")
+        lay.addWidget(empty)
+    else:
+        for r in sorted(rows, key=lambda x: (x["gio"], x["phut"])):
+            row_frame = QFrame()
+            row_frame.setStyleSheet(
+                "QFrame { background:white; border:1px solid #d8d2b8; border-radius:6px; }"
+            )
+            row_lay = QHBoxLayout(row_frame)
+            row_lay.setContentsMargins(10, 6, 10, 6)
+            row_lay.setSpacing(10)
+
+            time_chip = QLabel(f"{r['gio']:02d}:{r['phut']:02d}")
+            time_chip.setFixedWidth(58)
+            time_chip.setAlignment(Qt.AlignCenter)
+            time_chip.setStyleSheet(
+                f"background:{color}; color:white; border-radius:5px; "
+                f"font-weight:800; font-size:12px; padding:4px 0;"
+            )
+            row_lay.addWidget(time_chip)
+
+            arrow = QLabel("→")
+            arrow.setStyleSheet(f"color:{color}; font-weight:700; background:transparent; border:none;")
+            row_lay.addWidget(arrow)
+
+            value_lbl = QLabel(f"{r['value']} {unit}")
+            value_lbl.setStyleSheet("font-weight:700; font-size:12px; color:#2b2b2b; background:transparent; border:none;")
+            row_lay.addWidget(value_lbl)
+
+            row_lay.addStretch(1)
+            lay.addWidget(row_frame)
+
+    lay.addStretch(1)
+    return card
+
+
 class SettingTab(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -106,15 +171,16 @@ class SettingTab(QWidget):
             gl.addWidget(QLabel(unit), i, 2)
         root.addWidget(gb_env, 2)
 
-        # ---- cột giữa: lịch hoạt động (tóm tắt, readonly) ----
+        # ---- cột giữa: lịch hoạt động (tóm tắt, readonly, dạng card) ----
         gb_sched = QGroupBox("🗓️ LỊCH HOẠT ĐỘNG (đã cài đặt)")
         sl = QVBoxLayout(gb_sched)
-        self.lbl_schedule_summary = QLabel()
-        self.lbl_schedule_summary.setWordWrap(True)
-        self.lbl_schedule_summary.setStyleSheet(
-            "background:#eef0ef; border:1px solid #b9b28e; border-radius:4px; padding:10px;"
-        )
-        sl.addWidget(self.lbl_schedule_summary)
+        sl.setContentsMargins(10, 14, 10, 10)
+        sl.setSpacing(12)
+
+        self.schedule_cards_container = QVBoxLayout()
+        self.schedule_cards_container.setSpacing(12)
+        sl.addLayout(self.schedule_cards_container)
+        sl.addStretch(1)
         root.addWidget(gb_sched, 3)
 
         # ---- cột phải: 2 nút chuyển sang trang chỉnh sửa ----
@@ -150,23 +216,22 @@ class SettingTab(QWidget):
             box.setText(str(self.env_values[key]))
 
     def _refresh_schedule_summary(self):
-        def fmt(rows, unit):
-            if not rows:
-                return "  (chưa có lịch)"
-            return "\n".join(
-                f"  • {r['gio']:02d}:{r['phut']:02d} — {r['value']} {unit}" for r in rows
-            )
+        # xóa hết card cũ trước khi dựng lại (tránh chồng chất mỗi lần refresh)
+        while self.schedule_cards_container.count():
+            item = self.schedule_cards_container.takeAt(0)
+            w = item.widget()
+            if w is not None:
+                w.deleteLater()
 
-        feed = self.sec_feed.get_schedule() if hasattr(self, "sec_feed") else []
-        tam = self.sec_tam.get_schedule() if hasattr(self, "sec_tam") else []
-        rua = self.sec_rua.get_schedule() if hasattr(self, "sec_rua") else []
+        data_map = {
+            "cho_an": self.sec_feed.get_schedule() if hasattr(self, "sec_feed") else [],
+            "tam": self.sec_tam.get_schedule() if hasattr(self, "sec_tam") else [],
+            "rua_chuong": self.sec_rua.get_schedule() if hasattr(self, "sec_rua") else [],
+        }
 
-        text = (
-            f"🍽️ Cho ăn:\n{fmt(feed, 'gram')}\n\n"
-            f"🚿 Tắm:\n{fmt(tam, 'giây')}\n\n"
-            f"🧹 Rửa chuồng:\n{fmt(rua, 'giây')}"
-        )
-        self.lbl_schedule_summary.setText(text)
+        for key, icon, title, unit, color, bg in SCHEDULE_CATEGORIES:
+            card = build_schedule_card(icon, title, unit, color, bg, data_map[key])
+            self.schedule_cards_container.addWidget(card)
 
     # ==================================================================
     # TRANG 1 — CHỈNH SỬA MÔI TRƯỜNG + ĐỘNG CƠ (có nút BACK)
@@ -248,6 +313,15 @@ class SettingTab(QWidget):
         header.addWidget(btn_back)
         outer.addLayout(header)
 
+        self.lbl_schedule_page_warning = QLabel("")
+        self.lbl_schedule_page_warning.setWordWrap(True)
+        self.lbl_schedule_page_warning.setStyleSheet(
+            "background:#fdeaea; border:1px solid #d13c3c; border-radius:6px; "
+            "color:#a52020; font-weight:700; padding:8px; font-size:12px;"
+        )
+        self.lbl_schedule_page_warning.hide()
+        outer.addWidget(self.lbl_schedule_page_warning)
+
         row = QHBoxLayout()
         outer.addLayout(row)
 
@@ -275,9 +349,32 @@ class SettingTab(QWidget):
         return page
 
     def _goto_edit_schedule(self):
+        self.lbl_schedule_page_warning.hide()
         self.stack.setCurrentIndex(2)
 
     def _back_from_edit_schedule(self):
+        # kiểm tra trùng giờ ở cả 3 loại lịch trước khi cho phép rời trang
+        dup_feed = self.sec_feed.has_duplicates()
+        dup_tam = self.sec_tam.has_duplicates()
+        dup_rua = self.sec_rua.has_duplicates()
+
+        if dup_feed or dup_tam or dup_rua:
+            loai_trung = []
+            if dup_feed:
+                loai_trung.append("Cho ăn")
+            if dup_tam:
+                loai_trung.append("Tắm")
+            if dup_rua:
+                loai_trung.append("Rửa chuồng")
+            self.lbl_schedule_page_warning.setText(
+                "Không thể lưu: mục [" + ", ".join(loai_trung) + "] đang có mốc giờ bị "
+                "trùng nhau. Vui lòng sửa lại giờ khác nhau cho từng dòng "
+                "trước khi quay lại."
+            )
+            self.lbl_schedule_page_warning.show()
+            return  # KHÔNG rời trang, giữ nguyên ở màn hình chỉnh sửa
+
+        self.lbl_schedule_page_warning.hide()
         self._refresh_schedule_summary()
         self.stack.setCurrentIndex(0)
 
