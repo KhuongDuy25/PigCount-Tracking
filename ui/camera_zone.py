@@ -6,23 +6,42 @@ Widget camera cho tab HOME:
  - Hiển thị hình ảnh trực tiếp từ webcam / camera IP (OpenCV VideoCapture).
  - Cho phép người dùng VẼ VÙNG (zone) máng ăn bằng cách click chuột trái
    để thêm điểm, click chuột phải (hoặc double-click) để đóng đa giác.
- - Phát hiện lợn đang ở trong vùng máng ăn dựa trên MÀU SẮC VÙNG LƯNG
-   (mỗi con lợn được đánh dấu bằng 1 màu sơn/thẻ màu riêng -> đóng vai trò ID).
-   Đây là bản nền tảng đơn giản (color-blob detection bằng HSV), có thể
-   nâng cấp sau này thành mô hình AI nhận diện thật (YOLO / DeepSORT...).
+ - NHẬN DIỆN LỢN BẰNG MODEL YOLO (yolos26-200.pt) để khoanh vùng chính xác
+   từng con vật (không phụ thuộc ánh sáng/tư thế như cách dò màu thuần túy),
+   SAU ĐÓ lấy mẫu MÀU SẮC VÙNG LƯNG ngay trong vùng YOLO vừa phát hiện được
+   để so khớp với bảng màu ID (PIG_COLOR_IDS) -> GÁN ID cho từng con.
 
-Ghi chú: Nếu máy không có camera (hoặc chạy trên server không có thiết bị),
-widget sẽ tự chuyển sang "chế độ giả lập" (demo simulation) để giao diện
-vẫn hoạt động và có thể thao tác vẽ vùng / xem logic ID hoạt động ra sao.
+   Nói cách khác: YOLO trả lời "con nào đang ở đâu", còn màu lưng trả lời
+   "con đó là con nào (ID gì)" — kết hợp cả 2 để vừa chính xác vừa có ID
+   ổn định theo màu sơn/thẻ đánh dấu thực tế trên lưng con vật.
+
+ - Nếu chưa cài `ultralytics` hoặc chưa có file model, tự động rơi về chế độ
+   DÒ MÀU THUẦN TÚY (color-blob) như bản cũ để vẫn có thể test được ngay.
+ - Nếu máy không có camera, widget tự chuyển sang "chế độ giả lập" (demo).
 """
 
 import time
+import json
+import os
 import numpy as np
 
 try:
     import cv2
 except Exception:  # pragma: no cover
     cv2 = None
+
+# ---------------------------------------------------------------------
+# YOLO (Ultralytics). Cài đặt:  pip install ultralytics
+# ---------------------------------------------------------------------
+try:
+    from ultralytics import YOLO
+except Exception:  # pragma: no cover
+    YOLO = None
+
+# File luu vung mang an (zone), dat o thu muc goc du an (ngang hang voi main.py)
+# de ton tai qua cac lan tat/mo app.
+_BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ZONE_CONFIG_PATH = os.path.join(_BASE_DIR, "zone_config.json")
 
 from PyQt5.QtCore import Qt, QTimer, QPoint, pyqtSignal
 from PyQt5.QtGui import QImage, QPixmap, QPainter, QPen, QColor, QPolygon, QFont
@@ -31,26 +50,63 @@ from PyQt5.QtWidgets import (
     QGroupBox, QComboBox, QMessageBox
 )
 
-
-# ======================= CẤU HÌNH MODEL YOLO-SEG =======================
-# Đổi đường dẫn này thành file model bạn đã train (vd: "runs/segment/train/weights/best.pt").
-# Nếu để "yolo26-seg.pt" mà chưa có sẵn, Ultralytics sẽ tự tải model gốc (cần internet)
-# — với model đã train riêng cho lợn thì trỏ thẳng vào file .pt của bạn.
-YOLO_MODEL_PATH = "yolo26-seg.pt"
+# ======================= CẤU HÌNH MODEL YOLO =======================
+# Đường dẫn model đã train riêng cho lợn (đổi thành đường dẫn thật trên máy bạn,
+# vd "runs/detect/train/weights/yolos26-200.pt" hoặc để cùng thư mục với main.py).
+YOLO_MODEL_PATH = "yolos26-200.pt"
 
 # Ngưỡng tin cậy tối thiểu để chấp nhận 1 phát hiện là "lợn"
 YOLO_CONF_THRESHOLD = 0.4
 
-# Tên tracker tích hợp sẵn trong Ultralytics: "bytetrack.yaml" hoặc "botsort.yaml"
-YOLO_TRACKER = "bytetrack.yaml"
+# Model bạn train có 2 class: "human" và "pig". CHỈ GIỮ LẠI các class có tên
+# nằm trong danh sách này (không phân biệt hoa/thường); mọi detection khác
+# (vd "human") sẽ bị BỎ QUA hoàn toàn, không vẽ, không tính vào vùng máng ăn.
+# Nếu tên class thật trong model bạn train khác đi (vd "Pig", "heo"...), sửa
+# lại danh sách này cho khớp (mở panel "Nguồn camera & Model" ở tab HOME khi
+# chạy app để xem chương trình đọc được đúng tên class nào từ model).
+TARGET_CLASS_NAMES = {"pig"}
 
-# Nếu model của bạn có NHIỀU CLASS đại diện cho từng cá thể lợn cụ thể
-# (vd train riêng theo màu/đốm lưng: "heo_do", "heo_vang"...), đặt True để
-# hiển thị theo TÊN CLASS làm ID. Nếu model chỉ có 1 class "pig" chung,
-# để False -> ID sẽ lấy theo track_id do tracker cấp (Pig_<id>).
-USE_CLASS_NAME_AS_ID = False
+# Tỉ lệ phần TRÊN của khung/khối lợn được coi là "vùng lưng" để lấy mẫu màu
+# (0.5 = lấy nửa trên, tránh lấy nhầm màu chân/nền/sàn chuồng phía dưới).
+BACK_REGION_TOP_RATIO = 0.5
+
+# Dung sai (đơn vị Hue OpenCV, 0-179) khi so khớp màu mẫu với bảng màu ID.
+COLOR_MATCH_HUE_MARGIN = 6
+
+# Nhãn hiển thị khi màu lưng đo được không khớp bất kỳ ID nào trong bảng.
+UNKNOWN_ID_LABEL = "Chua_ro_ID"
+UNKNOWN_DRAW_BGR = (140, 140, 140)
+
+# Bảng màu ID lợn: tên hiển thị -> khoảng màu HSV (có thể nhiều dải hue, vd
+# màu đỏ vòng qua 2 đầu thang Hue 0 và 179) + màu vẽ (BGR) tương ứng.
+PIG_COLOR_IDS = {
+    "Lon_Do_01": {
+        "hue_ranges": [(0, 8), (170, 179)],  # đỏ nằm ở 2 đầu thang Hue
+        "s_range": (120, 255), "v_range": (80, 255),
+        "draw_bgr": (0, 0, 255),
+    },
+    "Lon_Vang_02": {
+        "hue_ranges": [(20, 35)],
+        "s_range": (120, 255), "v_range": (80, 255),
+        "draw_bgr": (0, 220, 255),
+    },
+    "Lon_Xanhla_03": {
+        "hue_ranges": [(45, 75)],
+        "s_range": (100, 255), "v_range": (70, 255),
+        "draw_bgr": (0, 200, 0),
+    },
+    "Lon_Xanhduong_04": {
+        "hue_ranges": [(95, 130)],
+        "s_range": (100, 255), "v_range": (70, 255),
+        "draw_bgr": (255, 120, 0),
+    },
+}
+
+MIN_BLOB_AREA = 600  # ngưỡng diện tích tối thiểu (pixel) để coi là 1 con lợn hợp lệ (chế độ dò màu thuần túy)
+
+
 class CameraZoneWidget(QWidget):
-    """Widget hiển thị camera + vẽ vùng máng ăn + nhận diện ID lợn theo màu lưng."""
+    """Widget hiển thị camera + vẽ vùng máng ăn + nhận diện lợn (YOLO) + gán ID theo màu lưng."""
 
     zone_status_changed = pyqtSignal(list)  # danh sách ID đang ở trong vùng
 
@@ -67,19 +123,24 @@ class CameraZoneWidget(QWidget):
         self.demo_mode = False
         self.demo_t0 = time.time()
 
+        self.model = None
+        self.model_ready = False
+
         self._build_ui()
         self._init_camera()
+        self._init_model()
+        self._load_zone_from_file()
 
         self.timer = QTimer(self)
         self.timer.timeout.connect(self._update_frame)
-        self.timer.start(66)  # ~15 FPS, đủ mượt và nhẹ CPU
+        self.timer.start(66)  # ~15 FPS, đủ mượt; tăng lên 150-200ms nếu máy yếu / CPU-only
 
     # ------------------------------------------------------------------ UI
     def _build_ui(self):
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
 
-        title = QLabel("CAMERA MÁNG ĂN — NHẬN DIỆN LỢN THEO ID (MÀU LƯNG)")
+        title = QLabel("CAMERA MÁNG ĂN — YOLO PHÁT HIỆN + MÀU LƯNG GÁN ID")
         title.setStyleSheet("font-weight:700; color:#1857a4; font-size:12px; padding:4px;")
         root.addWidget(title)
 
@@ -126,12 +187,17 @@ class CameraZoneWidget(QWidget):
         gb2_lay.addWidget(self.list_ids)
         side.addWidget(gb2)
 
-        gb3 = QGroupBox("Nguồn camera")
+        gb3 = QGroupBox("Nguồn camera & Model")
         gb3_lay = QVBoxLayout(gb3)
         self.combo_source = QComboBox()
         self.combo_source.addItems(["Camera 0 (mặc định)", "Camera 1", "Chế độ giả lập (demo)"])
         self.combo_source.currentIndexChanged.connect(self._on_source_changed)
         gb3_lay.addWidget(self.combo_source)
+
+        self.lbl_model_status = QLabel("Model: đang tải...")
+        self.lbl_model_status.setWordWrap(True)
+        self.lbl_model_status.setStyleSheet("color:#555; font-size:11px;")
+        gb3_lay.addWidget(self.lbl_model_status)
         side.addWidget(gb3)
 
         side.addStretch(1)
@@ -161,6 +227,37 @@ class CameraZoneWidget(QWidget):
             self.camera_index = idx
             self._init_camera()
 
+    # ---------------------------------------------------------------- model
+    def _init_model(self):
+        """Nạp model YOLO (yolos26-200.pt). Nếu lỗi (chưa cài ultralytics /
+        thiếu file model), chương trình tự rơi về chế độ DÒ MÀU THUẦN TÚY
+        (color-blob) để vẫn hoạt động được, chỉ là kém chính xác hơn."""
+        if YOLO is None:
+            self.lbl_model_status.setText(
+                "⚠️ Chưa cài 'ultralytics' -> đang dùng chế độ dò màu thuần túy.\n"
+                "Chạy: pip install ultralytics"
+            )
+            return
+        if not os.path.exists(YOLO_MODEL_PATH):
+            self.lbl_model_status.setText(
+                f"⚠️ Không tìm thấy model tại: {YOLO_MODEL_PATH}\n"
+                "-> đang dùng chế độ dò màu thuần túy."
+            )
+            return
+        try:
+            self.model = YOLO(YOLO_MODEL_PATH)
+            self.model_ready = True
+            class_list = ", ".join(f"{i}:{n}" for i, n in self.model.names.items())
+            self.lbl_model_status.setText(
+                f"✅ Model đã sẵn sàng: {YOLO_MODEL_PATH}\n"
+                f"Class: {class_list}\n"
+                f"Đang chỉ nhận diện: {', '.join(TARGET_CLASS_NAMES)}"
+            )
+        except Exception as e:
+            self.model = None
+            self.model_ready = False
+            self.lbl_model_status.setText(f"⚠️ Lỗi nạp model: {e}\n-> đang dùng chế độ dò màu thuần túy.")
+
     # ------------------------------------------------------------ drawing
     def _toggle_drawing(self, checked):
         self.drawing_enabled = checked
@@ -176,6 +273,33 @@ class CameraZoneWidget(QWidget):
         self.zone_closed = False
         self.btn_draw.setChecked(False)
         self.btn_draw.setText("Bắt đầu vẽ vùng máng ăn")
+        self._save_zone_to_file()  # luu lai trang thai "da xoa" -> lan sau mo app khong bi hien lai vung cu
+
+    # -------------------------------------------------------- luu / doc file
+    def _save_zone_to_file(self):
+        """Ghi danh sach diem cua vung mang an ra file JSON, ton tai qua cac lan mo/tat app."""
+        try:
+            with open(ZONE_CONFIG_PATH, "w", encoding="utf-8") as f:
+                json.dump({"zone_points": self.zone_points, "zone_closed": self.zone_closed}, f)
+        except Exception as e:
+            print(f"[CameraZoneWidget] Khong the luu vung mang an: {e}")
+
+    def _load_zone_from_file(self):
+        """Doc lai vung mang an tu file JSON (neu co) luc khoi dong widget."""
+        if not os.path.exists(ZONE_CONFIG_PATH):
+            return
+        try:
+            with open(ZONE_CONFIG_PATH, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            points = data.get("zone_points", [])
+            closed = data.get("zone_closed", False)
+            # JSON luu list [x, y] -> doi lai thanh tuple (x, y) de dung voi cv2/QPoint nhu code goc
+            self.zone_points = [tuple(p) for p in points]
+            self.zone_closed = bool(closed) and len(self.zone_points) >= 3
+            if self.zone_closed:
+                self.btn_draw.setText("Bắt đầu vẽ vùng máng ăn (đã có vùng đã lưu)")
+        except Exception as e:
+            print(f"[CameraZoneWidget] Khong the doc vung mang an da luu: {e}")
 
     def _on_mouse_press(self, event):
         if not self.drawing_enabled or self.zone_closed:
@@ -195,6 +319,7 @@ class CameraZoneWidget(QWidget):
             self.drawing_enabled = False
             self.btn_draw.setChecked(False)
             self.btn_draw.setText("Bắt đầu vẽ vùng máng ăn")
+            self._save_zone_to_file()  # luu ngay khi vung duoc dong thanh cong
         else:
             QMessageBox.information(self, "Vùng chưa hợp lệ",
                                      "Cần ít nhất 3 điểm để tạo thành 1 vùng kín.")
@@ -213,19 +338,138 @@ class CameraZoneWidget(QWidget):
         # ----- chế độ giả lập: vẽ nền chuồng trại + các "con lợn" di chuyển -----
         frame = np.full((self.frame_h, self.frame_w, 3), (235, 245, 250), dtype=np.uint8)
         t = time.time() - self.demo_t0
-        colors = list(PIG_COLOR_IDS.values())
-        for i, cfg in enumerate(colors):
+        colors = [cfg["draw_bgr"] for cfg in PIG_COLOR_IDS.values()]
+        for i, draw_bgr in enumerate(colors):
             cx = int(self.frame_w / 2 + 150 * np.sin(t * 0.4 + i * 1.7))
             cy = int(self.frame_h / 2 + 80 * np.cos(t * 0.3 + i * 2.1))
-            cv2.circle(frame, (cx, cy), 26, cfg["draw_bgr"], -1)
+            cv2.circle(frame, (cx, cy), 26, draw_bgr, -1)
             cv2.circle(frame, (cx, cy), 26, (40, 40, 40), 2)
         cv2.putText(frame, "DEMO MODE - khong tim thay camera that",
                     (10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 120), 1, cv2.LINE_AA)
         return frame
 
-    def _detect_pig_ids_in_zone(self, frame_bgr):
-        """Phát hiện các vùng màu (blob) khớp với bảng màu ID, kiểm tra tâm điểm
-        có nằm trong vùng máng ăn (zone) hay không. Trả về (frame_ve, danh_sach_id)."""
+    # ------------------------------------------------------ so khop mau ID
+    def _match_color_id(self, hsv_pixel):
+        """So sanh 1 mau HSV trung binh voi bang PIG_COLOR_IDS, tra ve
+        (pig_id, draw_bgr). Neu khong khop ID nao, tra ve (UNKNOWN, xam)."""
+        h, s, v = int(hsv_pixel[0]), int(hsv_pixel[1]), int(hsv_pixel[2])
+        for pig_id, cfg in PIG_COLOR_IDS.items():
+            s_lo, s_hi = cfg["s_range"]
+            v_lo, v_hi = cfg["v_range"]
+            if not (s_lo <= s <= s_hi and v_lo <= v <= v_hi):
+                continue
+            for h_lo, h_hi in cfg["hue_ranges"]:
+                lo = max(0, h_lo - COLOR_MATCH_HUE_MARGIN)
+                hi = min(179, h_hi + COLOR_MATCH_HUE_MARGIN)
+                if lo <= h <= hi:
+                    return pig_id, cfg["draw_bgr"]
+        return UNKNOWN_ID_LABEL, UNKNOWN_DRAW_BGR
+
+    def _sample_back_color_hsv(self, frame_bgr, x, y, w, h, poly=None):
+        """Lay mau mau HSV trung binh trong VUNG LUNG (nua tren) cua 1 con vat
+        vua duoc YOLO phat hien, uu tien gioi han theo mask segmentation (neu co)
+        de tranh lay nham mau nen/san chuong."""
+        back_h = max(1, int(h * BACK_REGION_TOP_RATIO))
+        y2 = min(frame_bgr.shape[0], y + back_h)
+        x2 = min(frame_bgr.shape[1], x + w)
+        x0, y0 = max(0, x), max(0, y)
+        if y2 <= y0 or x2 <= x0:
+            return None
+
+        if poly is not None:
+            mask_full = np.zeros(frame_bgr.shape[:2], dtype=np.uint8)
+            cv2.fillPoly(mask_full, [poly], 255)
+            back_limit = np.zeros_like(mask_full)
+            back_limit[y0:y2, x0:x2] = 255
+            combined = cv2.bitwise_and(mask_full, back_limit)
+            if cv2.countNonZero(combined) == 0:
+                return None
+            mean_bgr = cv2.mean(frame_bgr, mask=combined)[:3]
+        else:
+            roi = frame_bgr[y0:y2, x0:x2]
+            if roi.size == 0:
+                return None
+            mean_bgr = roi.reshape(-1, 3).mean(axis=0)
+
+        mean_bgr_np = np.uint8([[mean_bgr]])
+        mean_hsv = cv2.cvtColor(mean_bgr_np, cv2.COLOR_BGR2HSV)[0][0]
+        return mean_hsv
+
+    # ------------------------------------------------------- YOLO detection
+    def _detect_by_yolo_color(self, frame_bgr):
+        """Dùng YOLO để phát hiện từng con lợn (bbox hoặc mask segmentation),
+        sau đó lấy mẫu màu vùng lưng NGAY TRONG vùng YOLO phát hiện được để
+        so khớp bảng màu -> gán ID. Trả về (frame_ve, danh_sach_id_trong_vung)."""
+        found_ids = []
+        zone_np = np.array(self.zone_points, dtype=np.int32) if self.zone_points else None
+
+        results = self.model.predict(frame_bgr, conf=YOLO_CONF_THRESHOLD, verbose=False)
+        if not results:
+            return frame_bgr, []
+
+        r = results[0]
+        boxes = r.boxes
+        masks = r.masks
+        if boxes is None or len(boxes) == 0:
+            return frame_bgr, []
+
+        cls_ids = boxes.cls.int().tolist()
+        class_names = r.names  # dict: id -> tên class (vd {0:"human", 1:"pig"})
+
+        for i in range(len(boxes)):
+            cls_name = class_names.get(cls_ids[i], "").lower()
+            if cls_name not in TARGET_CLASS_NAMES:
+                continue  # BỎ QUA human (hoặc bất kỳ class nào không nằm trong TARGET_CLASS_NAMES)
+
+            x1, y1, x2, y2 = boxes.xyxy[i].tolist()
+            x, y, w, h = int(x1), int(y1), int(x2 - x1), int(y2 - y1)
+
+            poly = None
+            if masks is not None and i < len(masks.xy):
+                poly = np.array(masks.xy[i], dtype=np.int32)
+
+            # tâm điểm: ưu tiên tâm mask, không có thì lấy tâm bbox
+            if poly is not None:
+                M = cv2.moments(poly)
+                cx = int(M["m10"] / M["m00"]) if M["m00"] != 0 else x + w // 2
+                cy = int(M["m01"] / M["m00"]) if M["m00"] != 0 else y + h // 2
+            else:
+                cx, cy = x + w // 2, y + h // 2
+
+            # --- lấy mẫu màu vùng lưng + so khớp bảng màu -> gán ID ---
+            mean_hsv = self._sample_back_color_hsv(frame_bgr, x, y, w, h, poly=poly)
+            if mean_hsv is None:
+                continue
+            pig_id, id_color = self._match_color_id(mean_hsv)
+
+            inside = False
+            if self.zone_closed and zone_np is not None and len(zone_np) >= 3:
+                inside = cv2.pointPolygonTest(zone_np, (cx, cy), False) >= 0
+
+            color = id_color if inside else (150, 150, 150)
+            if poly is not None:
+                cv2.polylines(frame_bgr, [poly], True, color, 2)
+            else:
+                cv2.rectangle(frame_bgr, (x, y), (x + w, y + h), color, 2)
+
+            # khung nhỏ đánh dấu đúng vùng lưng đã lấy mẫu màu (để dễ kiểm tra trực quan)
+            back_h = max(1, int(h * BACK_REGION_TOP_RATIO))
+            cv2.rectangle(frame_bgr, (x, y), (x + w, y + back_h), (255, 255, 0), 1)
+
+            cv2.circle(frame_bgr, (cx, cy), 4, color, -1)
+            cv2.putText(frame_bgr, pig_id, (x, max(0, y - 8)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2, cv2.LINE_AA)
+
+            if inside:
+                found_ids.append(pig_id)
+
+        return frame_bgr, found_ids
+
+    # ---------------------------------------------------- fallback: do mau
+    def _detect_by_color_blob(self, frame_bgr):
+        """CHẾ ĐỘ DỰ PHÒNG khi chưa có model YOLO: dò trực tiếp các vùng màu
+        (color-blob) khớp bảng PIG_COLOR_IDS trên toàn khung hình. Kém chính
+        xác hơn YOLO (dễ lẫn nền/ánh sáng) nhưng vẫn giúp app chạy được ngay."""
         if cv2 is None:
             return frame_bgr, []
 
@@ -234,11 +478,16 @@ class CameraZoneWidget(QWidget):
         zone_np = np.array(self.zone_points, dtype=np.int32) if self.zone_points else None
 
         for pig_id, cfg in PIG_COLOR_IDS.items():
-            lower = np.array(cfg["hsv_lower"], dtype=np.uint8)
-            upper = np.array(cfg["hsv_upper"], dtype=np.uint8)
-            mask = cv2.inRange(hsv, lower, upper)
-            mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((5, 5), np.uint8))
-            contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            s_lo, s_hi = cfg["s_range"]
+            v_lo, v_hi = cfg["v_range"]
+            mask_total = np.zeros(hsv.shape[:2], dtype=np.uint8)
+            for h_lo, h_hi in cfg["hue_ranges"]:
+                lower = np.array([h_lo, s_lo, v_lo], dtype=np.uint8)
+                upper = np.array([h_hi, s_hi, v_hi], dtype=np.uint8)
+                mask_total |= cv2.inRange(hsv, lower, upper)
+
+            mask_total = cv2.morphologyEx(mask_total, cv2.MORPH_OPEN, np.ones((5, 5), np.uint8))
+            contours, _ = cv2.findContours(mask_total, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             for c in contours:
                 area = cv2.contourArea(c)
                 if area < MIN_BLOB_AREA:
@@ -249,7 +498,7 @@ class CameraZoneWidget(QWidget):
                 cx = int(M["m10"] / M["m00"])
                 cy = int(M["m01"] / M["m00"])
 
-                inside = True
+                inside = False
                 if self.zone_closed and zone_np is not None and len(zone_np) >= 3:
                     inside = cv2.pointPolygonTest(zone_np, (cx, cy), False) >= 0
 
@@ -286,7 +535,11 @@ class CameraZoneWidget(QWidget):
         if frame is None:
             return
 
-        frame, ids_in_zone = self._detect_pig_ids_in_zone(frame)
+        if cv2 is not None and self.model_ready and self.model is not None:
+            frame, ids_in_zone = self._detect_by_yolo_color(frame)
+        else:
+            frame, ids_in_zone = self._detect_by_color_blob(frame)
+
         frame = self._draw_zone_overlay(frame)
 
         # cập nhật danh sách ID đang ăn
