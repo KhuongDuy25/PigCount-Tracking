@@ -45,7 +45,7 @@ class ScheduleSection(QGroupBox):
         self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
         self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
         self.table.verticalHeader().setVisible(False)
-        self.table.setFixedHeight(300)
+        self.table.setFixedHeight(150)
         root.addWidget(self.table)
 
         btn_add = QPushButton(f"+ Thêm lịch {self.title().lower()}")
@@ -162,3 +162,134 @@ class ScheduleSection(QGroupBox):
             val = self.table.cellWidget(row, 2).value()
             result.append({"gio": gio, "phut": phut, "value": val})
         return result
+
+
+class LightScheduleSection(QGroupBox):
+    """Khối quản lý lịch CHIẾU SÁNG — khác với ScheduleSection ở chỗ đèn không
+    có 'thời gian chạy' (duration) mà có 1 cặp GIỜ BẬT + GIỜ TẮT cho mỗi dòng
+    (vd bật 18:00, tắt 22:00). Có thể thêm nhiều dòng nếu cần bật/tắt nhiều
+    khung giờ trong ngày (vd thêm 1 khung buổi sáng sớm)."""
+
+    def __init__(self, default_rows):
+        super().__init__("Chiếu sáng (Đèn)")
+        self._build_ui()
+        for gio_bat, phut_bat, gio_tat, phut_tat in default_rows:
+            self._add_row(gio_bat, phut_bat, gio_tat, phut_tat)
+        self._check_duplicates()
+
+    def _build_ui(self):
+        root = QVBoxLayout(self)
+
+        self.table = QTableWidget(0, 5)
+        self.table.setHorizontalHeaderLabels(["Giờ bật", "Phút bật", "Giờ tắt", "Phút tắt", ""])
+        for col in range(4):
+            self.table.horizontalHeader().setSectionResizeMode(col, QHeaderView.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(4, QHeaderView.Stretch)
+        self.table.verticalHeader().setVisible(False)
+        self.table.setFixedHeight(150)
+        root.addWidget(self.table)
+
+        btn_add = QPushButton("+ Thêm khung giờ chiếu sáng")
+        btn_add.clicked.connect(self._add_row_auto_time)
+        root.addWidget(btn_add)
+
+        self.lbl_warning = QLabel("")
+        self.lbl_warning.setWordWrap(True)
+        self.lbl_warning.setStyleSheet("color:#d13c3c; font-weight:700; font-size:11px; padding-top:4px;")
+        root.addWidget(self.lbl_warning)
+
+    def _find_free_on_time(self):
+        used = {(self.table.cellWidget(r, 0).value(), self.table.cellWidget(r, 1).value())
+                for r in range(self.table.rowCount())}
+        for offset in range(24):
+            gio = (18 + offset) % 24  # đèn thường bật buổi tối, dò bắt đầu từ 18h
+            if (gio, 0) not in used:
+                return gio, 0
+        return 18, 0
+
+    def _add_row_auto_time(self):
+        gio_bat, phut_bat = self._find_free_on_time()
+        gio_tat = (gio_bat + 3) % 24  # mặc định bật 3 tiếng, có thể sửa lại
+        self._add_row(gio_bat, phut_bat, gio_tat, 0)
+        self._check_duplicates()
+
+    def _add_row(self, gio_bat=18, phut_bat=0, gio_tat=22, phut_tat=0):
+        row = self.table.rowCount()
+        self.table.insertRow(row)
+
+        def make_spin(rng, val, on_change):
+            sp = QSpinBox()
+            sp.setRange(*rng)
+            sp.setValue(val)
+            sp.setAlignment(Qt.AlignCenter)
+            sp.valueChanged.connect(on_change)
+            return sp
+
+        self.table.setCellWidget(row, 0, make_spin((0, 23), gio_bat, self._check_duplicates))
+        self.table.setCellWidget(row, 1, make_spin((0, 59), phut_bat, self._check_duplicates))
+        self.table.setCellWidget(row, 2, make_spin((0, 23), gio_tat, self._check_duplicates))
+        self.table.setCellWidget(row, 3, make_spin((0, 59), phut_tat, self._check_duplicates))
+
+        btn_del = QPushButton("Xóa")
+        btn_del.setStyleSheet("background:#d13c3c; color:white; border-radius:4px;")
+        btn_del.clicked.connect(lambda: self._delete_row_by_widget(btn_del))
+        self.table.setCellWidget(row, 4, btn_del)
+
+    def _delete_row_by_widget(self, widget):
+        for row in range(self.table.rowCount()):
+            if self.table.cellWidget(row, 4) is widget:
+                self.table.removeRow(row)
+                break
+        self._check_duplicates()
+
+    def _check_duplicates(self):
+        """Chỉ kiểm tra trùng theo GIỜ BẬT (2 dòng cùng bật 1 giờ là vô nghĩa).
+        Giờ tắt trùng nhau thì không sao (2 khung có thể tắt cùng lúc)."""
+        n = self.table.rowCount()
+        on_times = []
+        for r in range(n):
+            sp_gio = self.table.cellWidget(r, 0)
+            sp_phut = self.table.cellWidget(r, 1)
+            if sp_gio is None or sp_phut is None:
+                continue
+            on_times.append((sp_gio.value(), sp_phut.value()))
+
+        counts = {}
+        for t in on_times:
+            counts[t] = counts.get(t, 0) + 1
+        duplicated = {t for t, c in counts.items() if c > 1}
+
+        has_dup = len(duplicated) > 0
+        for r in range(n):
+            sp_gio = self.table.cellWidget(r, 0)
+            sp_phut = self.table.cellWidget(r, 1)
+            if sp_gio is None or sp_phut is None:
+                continue
+            t = (sp_gio.value(), sp_phut.value())
+            style = DUPLICATE_STYLE if t in duplicated else NORMAL_STYLE
+            sp_gio.setStyleSheet(style)
+            sp_phut.setStyleSheet(style)
+
+        if has_dup:
+            times_text = ", ".join(f"{g:02d}:{p:02d}" for g, p in sorted(duplicated))
+            self.lbl_warning.setText(f"⚠️ Trùng giờ bật: {times_text} — vui lòng chỉnh lại trước khi lưu.")
+        else:
+            self.lbl_warning.setText("")
+
+        return has_dup
+
+    def has_duplicates(self):
+        return self._check_duplicates()
+
+    def get_schedule(self):
+        """Trả về list dict [{gio_bat, phut_bat, gio_tat, phut_tat}, ...]."""
+        result = []
+        for row in range(self.table.rowCount()):
+            result.append({
+                "gio_bat": self.table.cellWidget(row, 0).value(),
+                "phut_bat": self.table.cellWidget(row, 1).value(),
+                "gio_tat": self.table.cellWidget(row, 2).value(),
+                "phut_tat": self.table.cellWidget(row, 3).value(),
+            })
+        return result
+

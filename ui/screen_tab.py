@@ -72,7 +72,7 @@ class ScreenTab(QWidget):
         gb3 = QGroupBox("Trạng thái thiết bị")
         g3 = QGridLayout(gb3)
         devices = [
-            "Quạt cấp", "Quạt hút", "Phun sương",
+            "Quạt thổi", "Quạt hút", "Phun sương",
             "Cho ăn", "Tắm", "Sưởi",
             "Cấp nước uống", "Rửa chuồng", "Đèn",
         ]
