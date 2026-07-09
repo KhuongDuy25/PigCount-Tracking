@@ -1,2 +1,0 @@
-
-RECORD_VIDEO = False
