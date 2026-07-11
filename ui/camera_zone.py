@@ -6,14 +6,18 @@ Widget camera cho tab HOME:
  - Hiển thị hình ảnh trực tiếp từ webcam / camera IP (OpenCV VideoCapture).
  - Cho phép người dùng VẼ VÙNG (zone) máng ăn bằng cách click chuột trái
    để thêm điểm, click chuột phải (hoặc double-click) để đóng đa giác.
- - NHẬN DIỆN LỢN BẰNG MODEL YOLO (yolos26-200.pt) để khoanh vùng chính xác
-   từng con vật (không phụ thuộc ánh sáng/tư thế như cách dò màu thuần túy),
-   SAU ĐÓ lấy mẫu MÀU SẮC VÙNG LƯNG ngay trong vùng YOLO vừa phát hiện được
-   để so khớp với bảng màu ID (PIG_COLOR_IDS) -> GÁN ID cho từng con.
+ - NHẬN DIỆN + THEO DÕI (TRACKING) LỢN BẰNG MODEL YOLO (model.track(),
+   dùng ByteTrack tích hợp sẵn trong ultralytics) để giữ ID mượt giữa các
+   khung hình liên tiếp, KẾT HỢP với mẫu MÀU SẮC VÙNG LƯNG để xác định và
+   TỰ SỬA ID thật (real_id) mỗi khi phát hiện lệch (đối chiếu định kỳ).
 
-   Nói cách khác: YOLO trả lời "con nào đang ở đâu", còn màu lưng trả lời
-   "con đó là con nào (ID gì)" — kết hợp cả 2 để vừa chính xác vừa có ID
-   ổn định theo màu sơn/thẻ đánh dấu thực tế trên lưng con vật.
+   Nguyên tắc quan trọng: "nguồn sự thật" (source of truth) về ID luôn là
+   MÀU LƯNG trên chính con vật (vật lý, sống ngoài đời, không phụ thuộc
+   điện/RAM) — KHÔNG BAO GIỜ là tracker_id do ByteTrack cấp (chỉ tồn tại
+   trong phiên chạy, mất sạch khi restart app/cúp điện). Nhờ vậy khi mất
+   điện rồi có điện lại, frame đầu tiên sau khi khởi động lại app sẽ ĐỌC
+   LẠI MÀU và nhận đúng ID ngay lập tức, không cần "nhớ" gì từ trước.
+   Xem chi tiết ở hàm `_resolve_real_id()`.
 
  - Nếu chưa cài `ultralytics` hoặc chưa có file model, tự động rơi về chế độ
    DÒ MÀU THUẦN TÚY (color-blob) như bản cũ để vẫn có thể test được ngay.
@@ -23,7 +27,9 @@ Widget camera cho tab HOME:
 import time
 import json
 import os
+import threading
 import numpy as np
+from collections import deque, Counter
 
 try:
     import cv2
@@ -51,9 +57,12 @@ from PyQt5.QtWidgets import (
 )
 
 # ======================= CẤU HÌNH MODEL YOLO =======================
-# Đường dẫn model đã train riêng cho lợn (đổi thành đường dẫn thật trên máy bạn,
-# vd "runs/detect/train/weights/yolos26-200.pt" hoặc để cùng thư mục với main.py).
-YOLO_MODEL_PATH = "yolos26-200.pt"
+# Duong dan model: dung DUNG hoa/thuong nhu file that tren dia ("Yolos26-200.pt",
+# chu Y hoa) - sai hoa/thuong se chay OK tren Windows nhung LOI IM LANG tren
+# Linux/macOS (phan biet hoa thuong), roi tu roi ve che do do mau ma khong
+# bao loi ro rang. Dung duong dan TUYET DOI (cung thu muc goc voi main.py)
+# de khong phu thuoc thu muc dang dung khi chay app.
+YOLO_MODEL_PATH = os.path.join(_BASE_DIR, "Yolos26-200.pt")
 
 # Ngưỡng tin cậy tối thiểu để chấp nhận 1 phát hiện là "lợn"
 YOLO_CONF_THRESHOLD = 0.4
@@ -104,6 +113,67 @@ PIG_COLOR_IDS = {
 
 MIN_BLOB_AREA = 600  # ngưỡng diện tích tối thiểu (pixel) để coi là 1 con lợn hợp lệ (chế độ dò màu thuần túy)
 
+# ======================= TRACKING (ByteTrack) + DOI CHIEU MAU DINH KY =======
+# tracker_id (do model.track() cap) CHI song trong 1 phien chay, mat het khi
+# restart app / cup dien. real_id (ID that, tra tu mau lung) moi la "nguon
+# su that" - khong phu thuoc RAM. tracker_id chi dung de theo doi MUOT giua
+# cac frame lien tiep trong luc dang chay, KHONG dung de luu tru ID lau dai.
+COLOR_HISTORY_LEN = 5          # so mau mau gan nhat luu lai cho moi tracker_id, dung bau chon da so
+RECONCILE_INTERVAL_SEC = 8     # chu ky doi chieu lai mau, phat hien tracker bi "trao doi" ID do occlusion
+TRACKER_STALE_TIMEOUT_SEC = 30 # tracker_id khong xuat hien qua lau -> don khoi bo nho, tranh phinh to
+
+
+class _VideoStreamReader:
+    """Doc frame tu camera (webcam/IP) tren 1 LUONG RIENG, chay LIEN TUC va
+    LUON GHI DE frame moi nhat - khong xep hang doi. Day la mau "drop-frame"
+    chuan cho stream mang: neu ben tieu thu (YOLO/hien thi) xu ly cham hon
+    toc do camera gui ve, cac frame cu se TU DONG BI BO QUA thay vi don ung
+    trong buffer noi bo cua OpenCV/FFmpeg - day chinh la nguyen nhan gay lag
+    2-3 giay cong don theo thoi gian (giong het loi trong testcam.py).
+    """
+
+    def __init__(self, source):
+        self.source = source
+        self.cap = cv2.VideoCapture(source)
+        self.frame = None
+        self.ret = False
+        self.lock = threading.Lock()
+        self.running = False
+        self.thread = None
+        if self.cap.isOpened():
+            self.running = True
+            self.thread = threading.Thread(target=self._update_loop, daemon=True)
+            self.thread.start()
+
+    def isOpened(self):
+        return self.cap.isOpened()
+
+    def _update_loop(self):
+        while self.running:
+            ok, frame = self.cap.read()
+            if ok:
+                with self.lock:
+                    self.frame = frame
+                    self.ret = True
+            else:
+                # Doc loi (mat ket noi tam thoi) - nghi 100ms roi thu lai,
+                # tranh vong lap chiem 100% CPU khi mat ket noi keo dai
+                time.sleep(0.1)
+
+    def read(self):
+        """Luon tra ve FRAME MOI NHAT hien co, khong bao gio xep hang doi."""
+        with self.lock:
+            if self.frame is None:
+                return False, None
+            return self.ret, self.frame.copy()
+
+    def release(self):
+        self.running = False
+        if self.thread is not None:
+            self.thread.join(timeout=1.0)
+        if self.cap is not None:
+            self.cap.release()
+
 
 class CameraZoneWidget(QWidget):
     """Widget hiển thị camera + vẽ vùng máng ăn + nhận diện lợn (YOLO) + gán ID theo màu lưng."""
@@ -114,7 +184,7 @@ class CameraZoneWidget(QWidget):
         super().__init__(parent)
         self.camera_index = camera_index
         self.cap = None
-        self.frame_w, self.frame_h = 640, 360
+        self.frame_w, self.frame_h = 560, 540  # Y cao hon (dang doc) theo yeu cau
 
         self.zone_points = []          # các điểm đa giác (tọa độ theo ảnh gốc)
         self.zone_closed = False
@@ -125,6 +195,12 @@ class CameraZoneWidget(QWidget):
 
         self.model = None
         self.model_ready = False
+
+        # --- Trang thai tracking (chi song trong RAM/phien chay hien tai) ---
+        self.tracker_id_to_real_id = {}   # tracker_id (ByteTrack) -> real_id (nguon su that = mau)
+        self.color_history = {}           # tracker_id -> deque(cac mau mau gan nhat)
+        self.last_reconcile_time = {}     # tracker_id -> lan doi chieu gan nhat
+        self.tracker_last_seen = {}       # tracker_id -> lan cuoi xuat hien (de don don lieu cu)
 
         self._build_ui()
         self._init_camera()
@@ -208,7 +284,9 @@ class CameraZoneWidget(QWidget):
             self.demo_mode = True
             return
         try:
-            self.cap = cv2.VideoCapture(self.camera_index)
+            # Thay bằng URL RTSP/HTTP của camera IP của bạn
+            stream_url = "http://192.168.0.113:8080/video"  # ví dụ camera IP dùng app IP Webcam trên Android
+            self.cap = _VideoStreamReader(stream_url)
             if not self.cap.isOpened():
                 self.cap = None
                 self.demo_mode = True
@@ -365,6 +443,66 @@ class CameraZoneWidget(QWidget):
                     return pig_id, cfg["draw_bgr"]
         return UNKNOWN_ID_LABEL, UNKNOWN_DRAW_BGR
 
+    # ------------------------------------- tracker_id (tam) -> real_id (goc)
+    def _resolve_real_id(self, tracker_id, sampled_id, now):
+        """
+        tracker_id: ID tam thoi do ByteTrack cap (model.track()) - CHI song
+                    trong phien chay hien tai, mat sach khi restart/cup dien.
+        sampled_id: ID doc duoc tu MAU LUNG trong FRAME NAY (co the None neu
+                    khong lay duoc mau, hoac UNKNOWN_ID_LABEL neu khong khop
+                    mau nao trong bang).
+
+        Tra ve real_id ON DINH cho tracker_id nay:
+        - Lan dau gap tracker_id -> gan ngay theo mau doc duoc (khong cho
+          quet du lieu, vi can hien thi ID tu frame dau tien).
+        - Cac lan sau, moi RECONCILE_INTERVAL_SEC giay: doi chieu lai bang
+          MAU DA SO trong COLOR_HISTORY_LEN mau gan nhat (chong nhieu do 1
+          frame le bi sai), neu lech voi real_id dang gan thi TU SUA - day
+          la co che phat hien tracker bi "trao doi" ID giua 2 con vat khi
+          chung di cat ngang nhau (occlusion), khong lien quan gi toi cup
+          dien ma la loi rieng cua thuat toan tracking.
+        """
+        if tracker_id not in self.color_history:
+            self.color_history[tracker_id] = deque(maxlen=COLOR_HISTORY_LEN)
+
+        if sampled_id is not None and sampled_id != UNKNOWN_ID_LABEL:
+            self.color_history[tracker_id].append(sampled_id)
+
+        hist = self.color_history[tracker_id]
+        majority_id = Counter(hist).most_common(1)[0][0] if hist else UNKNOWN_ID_LABEL
+
+        current_real_id = self.tracker_id_to_real_id.get(tracker_id)
+
+        if current_real_id is None:
+            current_real_id = majority_id
+            self.tracker_id_to_real_id[tracker_id] = current_real_id
+            self.last_reconcile_time[tracker_id] = now
+        else:
+            last_check = self.last_reconcile_time.get(tracker_id, 0)
+            if now - last_check > RECONCILE_INTERVAL_SEC:
+                if len(hist) >= 3 and majority_id != UNKNOWN_ID_LABEL and majority_id != current_real_id:
+                    print(f"[CameraZoneWidget] Phat hien lech ID: tracker#{tracker_id} "
+                          f"{current_real_id} -> {majority_id} (da tu sua sau doi chieu mau).")
+                    current_real_id = majority_id
+                    self.tracker_id_to_real_id[tracker_id] = current_real_id
+                self.last_reconcile_time[tracker_id] = now
+
+        self.tracker_last_seen[tracker_id] = now
+        return current_real_id
+
+    def _don_dep_tracker_cu(self, now):
+        """Xoa du lieu cua cac tracker_id da lau khong xuat hien (con vat ra
+        khoi khung hinh, hoac ByteTrack da bo theo doi) - tranh cac dict
+        trang thai phinh to vo han neu chay lien tuc nhieu ngay."""
+        stale = [tid for tid, t in self.tracker_last_seen.items()
+                 if now - t > TRACKER_STALE_TIMEOUT_SEC]
+        for tid in stale:
+            self.tracker_id_to_real_id.pop(tid, None)
+            self.color_history.pop(tid, None)
+            self.last_reconcile_time.pop(tid, None)
+            self.tracker_last_seen.pop(tid, None)
+
+
     def _sample_back_color_hsv(self, frame_bgr, x, y, w, h, poly=None):
         """Lay mau mau HSV trung binh trong VUNG LUNG (nua tren) cua 1 con vat
         vua duoc YOLO phat hien, uu tien gioi han theo mask segmentation (neu co)
@@ -395,32 +533,42 @@ class CameraZoneWidget(QWidget):
         mean_hsv = cv2.cvtColor(mean_bgr_np, cv2.COLOR_BGR2HSV)[0][0]
         return mean_hsv
 
-    # ------------------------------------------------------- YOLO detection
-    def _detect_by_yolo_color(self, frame_bgr):
-        """Dùng YOLO để phát hiện từng con lợn (bbox hoặc mask segmentation),
-        sau đó lấy mẫu màu vùng lưng NGAY TRONG vùng YOLO phát hiện được để
-        so khớp bảng màu -> gán ID. Trả về (frame_ve, danh_sach_id_trong_vung)."""
+    # ------------------------------------------------------- YOLO tracking
+    def _detect_by_yolo_track_color(self, frame_bgr):
+        """Dung model.track() (ByteTrack tich hop san trong ultralytics) de
+        theo doi tung con vat MUOT giua cac frame lien tiep (tracker_id),
+        ket hop doi chieu mau lung (real_id) de xac dinh VA TU SUA ID that
+        khi phat hien tracker bi trao doi (xem _resolve_real_id). Tra ve
+        (frame_ve, danh_sach_real_id_trong_vung)."""
         found_ids = []
         zone_np = np.array(self.zone_points, dtype=np.int32) if self.zone_points else None
+        now = time.time()
 
-        results = self.model.predict(frame_bgr, conf=YOLO_CONF_THRESHOLD, verbose=False)
+        # persist=True: giu bo nho tracking cua ByteTrack giua cac lan goi
+        # (khong phai persist qua restart app - van la trong RAM cua tien
+        # trinh dang chay, dung y nghia "tracker tam thoi" da giai thich)
+        results = self.model.track(frame_bgr, conf=YOLO_CONF_THRESHOLD, persist=True, verbose=False)
         if not results:
             return frame_bgr, []
 
         r = results[0]
         boxes = r.boxes
         masks = r.masks
-        if boxes is None or len(boxes) == 0:
+        if boxes is None or len(boxes) == 0 or boxes.id is None:
+            # boxes.id la None khi ByteTrack chua kip cap tracker_id (vd frame
+            # dau tien) - bo qua frame nay, frame sau se co
             return frame_bgr, []
 
         cls_ids = boxes.cls.int().tolist()
-        class_names = r.names  # dict: id -> tên class (vd {0:"human", 1:"pig"})
+        class_names = r.names
+        track_ids = boxes.id.int().tolist()
 
         for i in range(len(boxes)):
             cls_name = class_names.get(cls_ids[i], "").lower()
             if cls_name not in TARGET_CLASS_NAMES:
-                continue  # BỎ QUA human (hoặc bất kỳ class nào không nằm trong TARGET_CLASS_NAMES)
+                continue
 
+            tracker_id = track_ids[i]
             x1, y1, x2, y2 = boxes.xyxy[i].tolist()
             x, y, w, h = int(x1), int(y1), int(x2 - x1), int(y2 - y1)
 
@@ -428,7 +576,6 @@ class CameraZoneWidget(QWidget):
             if masks is not None and i < len(masks.xy):
                 poly = np.array(masks.xy[i], dtype=np.int32)
 
-            # tâm điểm: ưu tiên tâm mask, không có thì lấy tâm bbox
             if poly is not None:
                 M = cv2.moments(poly)
                 cx = int(M["m10"] / M["m00"]) if M["m00"] != 0 else x + w // 2
@@ -436,11 +583,13 @@ class CameraZoneWidget(QWidget):
             else:
                 cx, cy = x + w // 2, y + h // 2
 
-            # --- lấy mẫu màu vùng lưng + so khớp bảng màu -> gán ID ---
             mean_hsv = self._sample_back_color_hsv(frame_bgr, x, y, w, h, poly=poly)
-            if mean_hsv is None:
-                continue
-            pig_id, id_color = self._match_color_id(mean_hsv)
+            sampled_id = None
+            if mean_hsv is not None:
+                sampled_id, _ = self._match_color_id(mean_hsv)
+
+            real_id = self._resolve_real_id(tracker_id, sampled_id, now)
+            id_color = PIG_COLOR_IDS.get(real_id, {}).get("draw_bgr", UNKNOWN_DRAW_BGR)
 
             inside = False
             if self.zone_closed and zone_np is not None and len(zone_np) >= 3:
@@ -452,18 +601,19 @@ class CameraZoneWidget(QWidget):
             else:
                 cv2.rectangle(frame_bgr, (x, y), (x + w, y + h), color, 2)
 
-            # khung nhỏ đánh dấu đúng vùng lưng đã lấy mẫu màu (để dễ kiểm tra trực quan)
             back_h = max(1, int(h * BACK_REGION_TOP_RATIO))
             cv2.rectangle(frame_bgr, (x, y), (x + w, y + back_h), (255, 255, 0), 1)
 
             cv2.circle(frame_bgr, (cx, cy), 4, color, -1)
-            cv2.putText(frame_bgr, pig_id, (x, max(0, y - 8)),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2, cv2.LINE_AA)
+            cv2.putText(frame_bgr, f"{real_id} (#{tracker_id})", (x, max(0, y - 8)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 2, cv2.LINE_AA)
 
             if inside:
-                found_ids.append(pig_id)
+                found_ids.append(real_id)
 
+        self._don_dep_tracker_cu(now)
         return frame_bgr, found_ids
+
 
     # ---------------------------------------------------- fallback: do mau
     def _detect_by_color_blob(self, frame_bgr):
@@ -536,7 +686,7 @@ class CameraZoneWidget(QWidget):
             return
 
         if cv2 is not None and self.model_ready and self.model is not None:
-            frame, ids_in_zone = self._detect_by_yolo_color(frame)
+            frame, ids_in_zone = self._detect_by_yolo_track_color(frame)
         else:
             frame, ids_in_zone = self._detect_by_color_blob(frame)
 

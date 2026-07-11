@@ -81,6 +81,43 @@ class DeviceToggle(QVBoxLayout):
         self.btn.setEnabled(not locked)
         self.lbl_status.setText("🔒 Đang khóa (AUTO tự điều khiển)" if locked else "")
 
+    def sync_from_remote(self, value):
+        """Cập nhật trạng thái nút theo giá trị ĐỌC ĐƯỢC từ Blynk Cloud (do
+        app mobile bấm, hoặc do AUTO tự điều khiển) - CHỈ cập nhật giao
+        diện, KHÔNG gọi set_pin_async() lại, để tránh vòng lặp ghi-đọc-ghi
+        vô nghĩa (và tốn API call). Dùng block_signals để đổi setChecked()
+        mà không kích hoạt lại _toggle()."""
+        if self.is_pulse:
+            # V6 (Cho ăn) là nút xung, dùng khóa dangChoAn riêng bên firmware.
+            # value=1 nghĩa la dang xa cam - hien thi trang thai, khong doi nut.
+            try:
+                dang_cho_an = int(float(value)) == 1
+            except (ValueError, TypeError):
+                dang_cho_an = False
+            self.btn.setEnabled(not dang_cho_an)
+            if dang_cho_an:
+                self.lbl_status.setText("🍽️ Đang cho ăn...")
+            elif self.lbl_status.text() == "🍽️ Đang cho ăn...":
+                self.lbl_status.setText("✅ Đã xong")
+            return
+
+        try:
+            checked = int(float(value)) == 1
+        except (ValueError, TypeError):
+            return
+
+        if self.btn.isChecked() == checked:
+            return  # Da dung roi, khong can dong bo lai (tranh nhap nhay UI)
+
+        self.btn.blockSignals(True)
+        self.btn.setChecked(checked)
+        self.btn.setText("ON" if checked else "OFF")
+        self.btn.setProperty("role", "toggleOn" if checked else "toggleOff")
+        self.btn.style().unpolish(self.btn)
+        self.btn.style().polish(self.btn)
+        self.btn.blockSignals(False)
+        self.lbl_status.setText("🔄 Đồng bộ từ xa")
+
     def _toggle(self, checked):
         value = 1 if checked else 0
         self.btn.setText("ON" if checked else "OFF")
@@ -156,6 +193,28 @@ class ModeSwitch(QHBoxLayout):
 
         self.blynk_client.set_pin_async("V5", value, callback=on_done)
 
+    def sync_from_remote(self, value):
+        """Cập nhật công tắc AUTO/MANUAL theo giá trị ĐỌC ĐƯỢC từ Blynk (do
+        app mobile bấm) - KHÔNG gửi lại V5, chỉ đổi giao diện + báo cho
+        ManualTab qua signal để khóa/mở khóa đúng các nút liên quan."""
+        try:
+            is_auto = int(float(value)) == 1
+        except (ValueError, TypeError):
+            return
+
+        if self.btn_mode.isChecked() == is_auto:
+            return
+
+        self.btn_mode.blockSignals(True)
+        self.btn_mode.setChecked(is_auto)
+        self.btn_mode.setText("AUTO (tự động)" if is_auto else "MANUAL (tay)")
+        self.btn_mode.setProperty("role", "toggleOn" if is_auto else "toggleOff")
+        self.btn_mode.style().unpolish(self.btn_mode)
+        self.btn_mode.style().polish(self.btn_mode)
+        self.btn_mode.blockSignals(False)
+        self.lbl_status.setText("🔄 Đồng bộ từ xa")
+        self.signals.mode_changed.emit(is_auto)
+
 
 class ManualTab(QWidget):
     def __init__(self, blynk_client=None, feed_coordinator=None, parent=None):
@@ -200,3 +259,18 @@ class ManualTab(QWidget):
     def _on_mode_changed(self, is_auto):
         for toggle in self.toggles.values():
             toggle.set_locked(is_auto)
+
+    def sync_from_blynk(self, data: dict):
+        """Goi tu main.py moi khi BlynkPoller doc xong 1 chu ky (xem
+        blynk_client.py). Day la CHIEU DONG BO NGUOC: khi bam nut tren app
+        MOBILE (hoac AUTO tu dieu khien), giao dien Python cung phai doi
+        theo, khong chi 1 chieu Python -> Blynk nhu truoc day."""
+        mode = data.get("mode")
+        if mode is not None:
+            self.mode_switch.sync_from_remote(mode)
+
+        devices = data.get("devices", {})
+        for name, toggle in self.toggles.items():
+            val = devices.get(toggle.pin)
+            if val is not None:
+                toggle.sync_from_remote(val)

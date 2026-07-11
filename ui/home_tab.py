@@ -1,11 +1,12 @@
 # -*- coding: utf-8 -*-
 """
 home_tab.py — Tab HOME
-Giữ nguyên bố cục tổng quan như ảnh gốc (nhiệt độ, độ ẩm, lịch trình tiếp theo,
-thống kê, trạng thái hệ thống, tổng quan vận hành) và BỔ SUNG khu vực camera
-giám sát máng ăn + vẽ vùng (zone) + nhận diện ID lợn theo màu lưng.
+Bố cục tổng quan (nhiệt độ, độ ẩm, lịch trình tiếp theo, thống kê, trạng
+thái hệ thống, tổng quan vận hành) + khu vực camera giám sát máng ăn, vẽ
+vùng (zone) và nhận diện ID theo màu lưng con vật (kết hợp YOLO tracking).
 """
 
+import time
 from PyQt5.QtCore import Qt, QTimer, QDateTime
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QGroupBox, QFrame
@@ -34,6 +35,7 @@ class StatusDot(QLabel):
 class HomeTab(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._last_data_time = None
         self._build_ui()
         self.timer = QTimer(self)
         self.timer.timeout.connect(self._tick)
@@ -50,19 +52,23 @@ class HomeTab(QWidget):
         gb_sensor = QGroupBox("Cảm biến môi trường")
         gl = QGridLayout(gb_sensor)
         gl.addWidget(QLabel("🌡️ Nhiệt độ"), 0, 0)
-        self.lbl_temp = value_label("31.4")
+        self.lbl_temp = value_label("--")
         gl.addWidget(self.lbl_temp, 0, 1)
         gl.addWidget(QLabel("°C"), 0, 2)
 
         gl.addWidget(QLabel("💧 Độ ẩm"), 1, 0)
-        self.lbl_humi = value_label("59.2")
+        self.lbl_humi = value_label("--")
         gl.addWidget(self.lbl_humi, 1, 1)
         gl.addWidget(QLabel("%"), 1, 2)
 
-        gl.addWidget(QLabel("🌤️ Nhiệt độ ngoài trời"), 2, 0)
-        self.lbl_out_temp = value_label("18")
-        gl.addWidget(self.lbl_out_temp, 2, 1)
-        gl.addWidget(QLabel("°C"), 2, 2)
+        gl.addWidget(QLabel("🌾 Cám tồn"), 2, 0)
+        self.lbl_cam = value_label("--")
+        gl.addWidget(self.lbl_cam, 2, 1)
+        gl.addWidget(QLabel("g"), 2, 2)
+
+        gl.addWidget(QLabel("🚰 Mực nước"), 3, 0)
+        self.lbl_water = value_label("--")
+        gl.addWidget(self.lbl_water, 3, 1)
         left.addWidget(gb_sensor)
 
         gb_next = QGroupBox("Lịch trình tiếp theo")
@@ -98,7 +104,7 @@ class HomeTab(QWidget):
         farm_lay.addWidget(farm_img)
         mid.addWidget(gb_farm)
 
-        # ---- KHU VỰC MỚI: camera giám sát máng ăn + vẽ vùng + ID lợn ----
+        # ---- Camera giám sát máng ăn: vẽ vùng + YOLO tracking + ID theo màu lưng ----
         gb_cam = QGroupBox("Giám sát máng ăn (Camera + Zone + Nhận diện ID theo màu lưng)")
         cam_lay = QVBoxLayout(gb_cam)
         self.camera_widget = CameraZoneWidget()
@@ -121,24 +127,66 @@ class HomeTab(QWidget):
         gb_over = QGroupBox("Tổng quan vận hành")
         ol = QGridLayout(gb_over)
         ol.addWidget(QLabel("Chế độ hiện tại"), 0, 0)
-        lbl_mode = QLabel("MANUAL")
-        lbl_mode.setStyleSheet("color:#2fae4e; font-weight:700;")
-        ol.addWidget(lbl_mode, 0, 1)
+        self.lbl_mode = QLabel("--")
+        self.lbl_mode.setStyleSheet("color:#2fae4e; font-weight:700;")
+        ol.addWidget(self.lbl_mode, 0, 1)
 
         ol.addWidget(QLabel("Chu trình"), 1, 0)
         lbl_cycle = QLabel("Chờ lệnh")
         ol.addWidget(lbl_cycle, 1, 1)
 
         ol.addWidget(QLabel("Trạng thái"), 2, 0)
-        lbl_state = QLabel("Bình thường")
-        lbl_state.setStyleSheet("color:#2fae4e; font-weight:700;")
-        ol.addWidget(lbl_state, 2, 1)
+        self.lbl_state = QLabel("Chưa kết nối")
+        self.lbl_state.setStyleSheet("color:#9a9a9a; font-weight:700;")
+        ol.addWidget(self.lbl_state, 2, 1)
         right.addWidget(gb_over)
 
         right.addStretch(1)
 
     # ------------------------------------------------------------------
+    def update_from_blynk(self, data: dict):
+        """Nhận dict từ BlynkPoller.data_updated (xem blynk_client.py) mỗi
+        chu kỳ polling, cập nhật các label hiển thị dữ liệu THẬT thay vì
+        số liệu tĩnh. Gọi 1 lần mỗi lần poller đọc xong, nên không cần
+        tính toán gì phức tạp ở đây - chỉ gán trực tiếp."""
+        temp = data.get("temp")
+        humi = data.get("humi")
+        cam = data.get("cam")
+        water = data.get("water")
+        mode = data.get("mode")
+
+        if temp is not None:
+            self.lbl_temp.setText(str(temp))
+        if humi is not None:
+            self.lbl_humi.setText(str(humi))
+        if cam is not None:
+            self.lbl_cam.setText(str(cam))
+        if water is not None:
+            try:
+                self.lbl_water.setText("Đầy" if int(float(water)) == 1 else "Cạn")
+            except (ValueError, TypeError):
+                self.lbl_water.setText("--")
+
+        if mode is not None:
+            try:
+                is_auto = int(float(mode)) == 1
+                self.lbl_mode.setText("AUTO (tự động)" if is_auto else "MANUAL (tay)")
+            except (ValueError, TypeError):
+                pass
+
+        self.dot_system.set_on(True)
+        self.lbl_state.setText("Bình thường")
+        self.lbl_state.setStyleSheet("color:#2fae4e; font-weight:700;")
+        self._last_data_time = time.time()
+
+    # ------------------------------------------------------------------
     def _tick(self):
-        # Chỗ này để dành cho việc gắn dữ liệu thật (đọc từ PLC / Blynk / Serial...)
-        # Hiện tại chỉ là placeholder không đổi giá trị để không gây hiểu nhầm là dữ liệu thật.
-        pass
+        # Neu qua lau khong nhan duoc du lieu tu BlynkPoller (mat mang, ESP32
+        # offline...), bao trang thai "mat ket noi" thay vi tiep tuc hien
+        # thi so lieu cu nhu the van con dung - tranh hieu nham.
+        if self._last_data_time is None:
+            return
+        if time.time() - self._last_data_time > 15:
+            self.dot_system.set_on(False)
+            self.lbl_state.setText("⚠️ Mất kết nối dữ liệu")
+            self.lbl_state.setStyleSheet("color:#c0392b; font-weight:700;")
