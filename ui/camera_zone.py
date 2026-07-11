@@ -62,7 +62,7 @@ from PyQt5.QtWidgets import (
 # Linux/macOS (phan biet hoa thuong), roi tu roi ve che do do mau ma khong
 # bao loi ro rang. Dung duong dan TUYET DOI (cung thu muc goc voi main.py)
 # de khong phu thuoc thu muc dang dung khi chay app.
-YOLO_MODEL_PATH = os.path.join(_BASE_DIR, "Yolos26-200.pt")
+YOLO_MODEL_PATH = os.path.join(_BASE_DIR, "C:/Users/KhuongDuy/Downloads/Yolos26-200.pt")
 
 # Ngưỡng tin cậy tối thiểu để chấp nhận 1 phát hiện là "lợn"
 YOLO_CONF_THRESHOLD = 0.4
