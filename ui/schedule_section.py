@@ -1,16 +1,35 @@
 # -*- coding: utf-8 -*-
 """
-schedule_section.py — Khối quản lý lịch cho 1 loại hoạt động (Cho ăn / Tắm / Rửa chuồng).
+schedule_section.py — Khối quản lý lịch cho 1 loại hoạt động (Cho ăn / Tắm / Rửa chuồng / Đèn).
 Tách riêng thành widget dùng chung để nhúng trực tiếp vào tab SETTING (không
 còn mở qua QDialog/cửa sổ riêng nữa).
 
-Bổ sung: LOGIC CHỐNG TRÙNG GIỜ trong cùng 1 loại hoạt động —
-  - Khi thêm dòng mới, tự tìm giờ:phút trống gần nhất thay vì luôn mặc định 6:00
-    (tránh tạo ra trùng ngay khi vừa thêm).
-  - Khi người dùng tự sửa giờ/phút, nếu trùng với 1 dòng khác đã có, dòng đó
-    được TÔ ĐỎ VIỀN + hiện dòng cảnh báo ngay dưới bảng.
-  - Cung cấp `has_duplicates()` để màn hình cha (SettingTab) kiểm tra trước khi
-    cho phép rời khỏi trang chỉnh sửa (bấm BACK) — không cho lưu lịch bị trùng.
+LOGIC CHỐNG CHỒNG LẤN LỊCH (nâng cấp, thay cho kiểu "trùng đúng 1 mốc giờ"
+cũ - vốn bỏ lọt rất nhiều trường hợp thực tế nguy hiểm):
+
+  1. TẮM / RỬA CHUỒNG (có thời lượng chạy tính bằng GIÂY): 1 lịch không chỉ
+     là 1 ĐIỂM giờ:phút, mà là 1 KHOẢNG [giờ:phút, giờ:phút + thời_lượng).
+     Vì thời lượng tính bằng giây trong khi giờ bắt đầu chỉ chọn được theo
+     phút, 2 lịch NHÌN THÌ KHÁC GIỜ vẫn có thể chồng lấn thật (ví dụ Tắm
+     08:00 chạy 80s kết thúc thật lúc 08:01:20, đè lên lịch Tắm 08:01 bắt
+     đầu ngay trong lúc lịch trước còn đang chạy) - nên toàn bộ phép so
+     sánh dưới đây làm việc ở ĐƠN VỊ GIÂY, không làm tròn về phút.
+  2. ĐÈN (có GIỜ BẬT + GIỜ TẮT riêng): áp dụng đúng logic khoảng [bật, tắt),
+     kể cả trường hợp HẸN QUA ĐÊM (giờ tắt nhỏ hơn giờ bật, vd 22:00->06:00)
+     - được coi là khoảng vắt qua nửa đêm, không phải lỗi.
+  3. GIỜ BẬT = GIỜ TẮT (khoảng thời gian bằng 0) bị chặn RIÊNG, xem là lỗi
+     nhập liệu (không phải "chồng lấn"), vì firmware sẽ bật rồi tắt gần
+     như ngay lập tức trong cùng 1 chu kỳ kiểm tra, vô nghĩa về mặt vận
+     hành.
+  4. HAI KHUNG SÁT RANH GIỚI (vd 18:00-19:00 và 19:00-20:00) được COI LÀ
+     HỢP LỆ (không chồng lấn) - vì tại đúng 19:00, relay chỉ đơn giản
+     chuyển thẳng từ "đang tắt vì khung 1 kết thúc" sang "đang bật vì
+     khung 2 bắt đầu", không có xung đột lệnh thực sự nào cả.
+
+  `has_duplicates()` (giữ nguyên tên hàm để không phải sửa lại chỗ gọi ở
+  SettingTab) giờ trả về True nếu có BẤT KỲ xung đột nào ở trên (chồng lấn
+  HOẶC giờ bật = giờ tắt) - SettingTab dùng kết quả này để CHẶN NÚT BACK,
+  không cho lưu lịch cho tới khi người dùng sửa hết xung đột.
 """
 
 from PyQt5.QtCore import Qt
@@ -21,15 +40,68 @@ from PyQt5.QtWidgets import (
 DUPLICATE_STYLE = "QSpinBox { border: 2px solid #d13c3c; background: #fdeaea; }"
 NORMAL_STYLE = "QSpinBox { border: 1px solid #b9b28e; background: white; }"
 
+SECONDS_PER_DAY = 86400
+
+
+def _normalize_interval(start_sec, end_sec):
+    """Chuẩn hóa 1 khoảng [start, end) về dạng các đoạn TUYẾN TÍNH (không
+    vắt qua nửa đêm), tách thành 2 đoạn nếu khoảng gốc vắt qua 0h - vì lịch
+    lặp lại MỖI NGÀY, phần "tràn" qua nửa đêm phải được coi là đè lên đúng
+    đầu ngày hôm sau (và mọi ngày khác, do lặp lại), nên tách thành:
+      [start, 86400) và [0, end - 86400)
+    Nếu không vắt qua nửa đêm, trả về nguyên 1 đoạn [start, end)."""
+    if end_sec > start_sec:
+        return [(start_sec, end_sec)]
+    # end_sec <= start_sec: vat qua nua dem (da duoc dam bao khong bang
+    # nhau boi ham goi truoc do - xem kiem tra do_dai_bang_0 rieng)
+    wrapped_end = end_sec + SECONDS_PER_DAY
+    return [(start_sec, SECONDS_PER_DAY), (0, wrapped_end - SECONDS_PER_DAY)]
+
+
+def _segments_overlap(seg_a, seg_b):
+    """2 doan tuyen tinh [a1,a2) va [b1,b2) chong lan THAT SU (khong tinh
+    cham dung ranh gioi a2==b1) khi va chi khi a1 < b2 VA b1 < a2."""
+    a1, a2 = seg_a
+    b1, b2 = seg_b
+    return a1 < b2 and b1 < a2
+
+
+def intervals_overlap(a_start, a_end, b_start, b_end):
+    """True neu 2 khoang [a_start,a_end) va [b_start,b_end) (theo giay
+    trong ngay, co the vat qua nua dem) chong lan THAT SU voi nhau."""
+    segs_a = _normalize_interval(a_start, a_end)
+    segs_b = _normalize_interval(b_start, b_end)
+    return any(_segments_overlap(sa, sb) for sa in segs_a for sb in segs_b)
+
+
+def format_hms(total_seconds):
+    """Format so giay-trong-ngay (co the > 86400 do vat qua nua dem) thanh
+    chuoi gio:phut:giay de hien thi canh bao de hieu."""
+    total_seconds = total_seconds % SECONDS_PER_DAY
+    h = total_seconds // 3600
+    m = (total_seconds % 3600) // 60
+    s = total_seconds % 60
+    return f"{h:02d}:{m:02d}:{s:02d}" if s else f"{h:02d}:{m:02d}"
+
 
 class ScheduleSection(QGroupBox):
-    """Một khối quản lý lịch cho 1 loại hoạt động (Cho ăn / Tắm / Rửa chuồng)."""
+    """Một khối quản lý lịch cho 1 loại hoạt động (Cho ăn / Tắm / Rửa chuồng).
 
-    def __init__(self, title, value_label, value_unit, value_range, default_rows):
+    is_duration_based=True (dùng cho Tắm/Rửa chuồng, "value" = thời lượng
+    chạy tính bằng GIÂY): kiểm tra CHỒNG LẤN KHOẢNG THỜI GIAN thực sự, chính
+    xác tới giây (xem intervals_overlap() ở đầu file).
+
+    is_duration_based=False (mặc định, dùng cho Cho ăn - không có khái niệm
+    "thời lượng chạy" đáng tin cậy vì phụ thuộc tốc độ xả cám thực tế): giữ
+    nguyên kiểu kiểm tra TRÙNG ĐÚNG 1 MỐC giờ:phút như trước."""
+
+    def __init__(self, title, value_label, value_unit, value_range, default_rows,
+                 is_duration_based=False):
         super().__init__(title)
         self.value_label = value_label
         self.value_unit = value_unit
         self.value_range = value_range  # (lo, hi)
+        self.is_duration_based = is_duration_based
         self._build_ui()
         for gio, phut, val in default_rows:
             self._add_row(gio, phut, val)
@@ -45,8 +117,9 @@ class ScheduleSection(QGroupBox):
         self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
         self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
         self.table.verticalHeader().setVisible(False)
-        self.table.setFixedHeight(150)
-        root.addWidget(self.table)
+        # SUA: bo setFixedHeight(150) - day la 1 "bang du lieu" (treeview),
+        # CHO PHEP no gian lap day khong gian con lai trong khung.
+        root.addWidget(self.table, 1)
 
         btn_add = QPushButton(f"+ Thêm lịch {self.title().lower()}")
         btn_add.clicked.connect(self._add_row_auto_time)
@@ -54,7 +127,7 @@ class ScheduleSection(QGroupBox):
 
         self.lbl_warning = QLabel("")
         self.lbl_warning.setWordWrap(True)
-        self.lbl_warning.setStyleSheet("color:#d13c3c; font-weight:700; font-size:11px; padding-top:4px;")
+        self.lbl_warning.setStyleSheet("color:#d13c3c; font-weight:700; font-size:14px; padding-top:4px;")
         root.addWidget(self.lbl_warning)
 
     # ------------------------------------------------------- thêm dòng
@@ -97,10 +170,11 @@ class ScheduleSection(QGroupBox):
         sp_val.setRange(lo, hi)
         sp_val.setValue(val if val is not None else lo)
         sp_val.setAlignment(Qt.AlignCenter)
+        sp_val.valueChanged.connect(self._check_duplicates)  # đổi thời lượng cũng có thể gây/hết chồng lấn
         self.table.setCellWidget(row, 2, sp_val)
 
         btn_del = QPushButton("Xóa")
-        btn_del.setStyleSheet("background:#d13c3c; color:white; border-radius:4px;")
+        btn_del.setStyleSheet("background:#d13c3c; color:white; border-radius:0px;")
         btn_del.clicked.connect(lambda: self._delete_row_by_widget(btn_del))
         self.table.setCellWidget(row, 3, btn_del)
 
@@ -111,39 +185,70 @@ class ScheduleSection(QGroupBox):
                 break
         self._check_duplicates()
 
-    # ------------------------------------------------------- chống trùng giờ
+    # ------------------------------------------------------- chống trùng/chồng lấn giờ
     def _check_duplicates(self):
-        """Quét toàn bộ dòng, tìm các cặp (giờ, phút) bị trùng nhau, tô đỏ các
-        ô liên quan và hiện dòng cảnh báo. Trả về True nếu có ít nhất 1 cặp trùng."""
+        """Cho ăn (is_duration_based=False): kiểm tra TRÙNG ĐÚNG 1 MỐC như cũ.
+        Tắm/Rửa chuồng (is_duration_based=True): kiểm tra CHỒNG LẤN KHOẢNG
+        THỜI GIAN thực sự [giờ:phút, giờ:phút + thời_lượng_giây), chính xác
+        tới giây - phát hiện được cả trường hợp 2 mốc KHÁC PHÚT nhưng vẫn
+        đè lên nhau (vd 08:00 chạy 80s và 08:01 chạy 80s)."""
         n = self.table.rowCount()
-        time_pairs = []
+        rows = []
         for r in range(n):
             sp_gio = self.table.cellWidget(r, 0)
             sp_phut = self.table.cellWidget(r, 1)
+            sp_val = self.table.cellWidget(r, 2)
             if sp_gio is None or sp_phut is None:
                 continue
-            time_pairs.append((sp_gio.value(), sp_phut.value()))
+            rows.append((r, sp_gio, sp_phut, sp_val))
 
-        # đếm số lần xuất hiện mỗi mốc giờ
-        counts = {}
-        for t in time_pairs:
-            counts[t] = counts.get(t, 0) + 1
-        duplicated_times = {t for t, c in counts.items() if c > 1}
+        bad_rows = set()   # index vào `rows` bị lỗi (chồng lấn hoặc thời lượng = 0)
+        messages = []
 
-        has_dup = len(duplicated_times) > 0
-        for r in range(n):
-            sp_gio = self.table.cellWidget(r, 0)
-            sp_phut = self.table.cellWidget(r, 1)
-            if sp_gio is None or sp_phut is None:
-                continue
-            t = (sp_gio.value(), sp_phut.value())
-            style = DUPLICATE_STYLE if t in duplicated_times else NORMAL_STYLE
+        if self.is_duration_based:
+            intervals = []
+            for i, (r, sp_gio, sp_phut, sp_val) in enumerate(rows):
+                start = sp_gio.value() * 3600 + sp_phut.value() * 60
+                duration = sp_val.value()
+                if duration <= 0:
+                    bad_rows.add(i)
+                    messages.append(f"{sp_gio.value():02d}:{sp_phut.value():02d} có thời gian chạy = 0")
+                    continue
+                intervals.append((i, start, start + duration))
+
+            for a in range(len(intervals)):
+                ia, sa, ea = intervals[a]
+                for b in range(a + 1, len(intervals)):
+                    ib, sb, eb = intervals[b]
+                    if intervals_overlap(sa, ea, sb, eb):
+                        bad_rows.add(ia)
+                        bad_rows.add(ib)
+                        _, gio_a, phut_a, _ = rows[ia]
+                        _, gio_b, phut_b, _ = rows[ib]
+                        messages.append(
+                            f"{gio_a.value():02d}:{phut_a.value():02d} (đến {format_hms(ea)}) "
+                            f"chồng lấn {gio_b.value():02d}:{phut_b.value():02d} (đến {format_hms(eb)})"
+                        )
+        else:
+            counts = {}
+            for i, (r, sp_gio, sp_phut, sp_val) in enumerate(rows):
+                t = (sp_gio.value(), sp_phut.value())
+                counts.setdefault(t, []).append(i)
+            for t, idxs in counts.items():
+                if len(idxs) > 1:
+                    bad_rows.update(idxs)
+                    messages.append(f"{t[0]:02d}:{t[1]:02d} bị trùng ({len(idxs)} dòng)")
+
+        has_dup = len(bad_rows) > 0
+        for i, (r, sp_gio, sp_phut, sp_val) in enumerate(rows):
+            style = DUPLICATE_STYLE if i in bad_rows else NORMAL_STYLE
             sp_gio.setStyleSheet(style)
             sp_phut.setStyleSheet(style)
+            if sp_val is not None:
+                sp_val.setStyleSheet(style if (self.is_duration_based and i in bad_rows) else NORMAL_STYLE)
 
         if has_dup:
-            times_text = ", ".join(f"{g:02d}:{p:02d}" for g, p in sorted(duplicated_times))
-            self.lbl_warning.setText(f"⚠️ Trùng giờ: {times_text} — vui lòng chỉnh lại trước khi lưu.")
+            self.lbl_warning.setText("⚠️ " + "; ".join(messages) + " — vui lòng chỉnh lại trước khi lưu.")
         else:
             self.lbl_warning.setText("")
 
@@ -186,8 +291,8 @@ class LightScheduleSection(QGroupBox):
             self.table.horizontalHeader().setSectionResizeMode(col, QHeaderView.ResizeToContents)
         self.table.horizontalHeader().setSectionResizeMode(4, QHeaderView.Stretch)
         self.table.verticalHeader().setVisible(False)
-        self.table.setFixedHeight(150)
-        root.addWidget(self.table)
+        # SUA: bo setFixedHeight(150) - cho phep bang gian lap day khong gian.
+        root.addWidget(self.table, 1)
 
         btn_add = QPushButton("+ Thêm khung giờ chiếu sáng")
         btn_add.clicked.connect(self._add_row_auto_time)
@@ -195,7 +300,7 @@ class LightScheduleSection(QGroupBox):
 
         self.lbl_warning = QLabel("")
         self.lbl_warning.setWordWrap(True)
-        self.lbl_warning.setStyleSheet("color:#d13c3c; font-weight:700; font-size:11px; padding-top:4px;")
+        self.lbl_warning.setStyleSheet("color:#d13c3c; font-weight:700; font-size:14px; padding-top:4px;")
         root.addWidget(self.lbl_warning)
 
     def _find_free_on_time(self):
@@ -231,7 +336,7 @@ class LightScheduleSection(QGroupBox):
         self.table.setCellWidget(row, 3, make_spin((0, 59), phut_tat, self._check_duplicates))
 
         btn_del = QPushButton("Xóa")
-        btn_del.setStyleSheet("background:#d13c3c; color:white; border-radius:4px;")
+        btn_del.setStyleSheet("background:#d13c3c; color:white; border-radius:0px;")
         btn_del.clicked.connect(lambda: self._delete_row_by_widget(btn_del))
         self.table.setCellWidget(row, 4, btn_del)
 
@@ -243,36 +348,61 @@ class LightScheduleSection(QGroupBox):
         self._check_duplicates()
 
     def _check_duplicates(self):
-        """Chỉ kiểm tra trùng theo GIỜ BẬT (2 dòng cùng bật 1 giờ là vô nghĩa).
-        Giờ tắt trùng nhau thì không sao (2 khung có thể tắt cùng lúc)."""
+        """Kiểm tra CHỒNG LẤN KHOẢNG [giờ bật, giờ tắt) thực sự giữa các
+        dòng - hỗ trợ ĐÚNG cả trường hợp hẹn QUA ĐÊM (giờ tắt < giờ bật, vd
+        22:00 -> 06:00, coi là khoảng vắt qua nửa đêm chứ không phải lỗi).
+        Riêng trường hợp GIỜ BẬT = GIỜ TẮT (khoảng thời gian bằng 0) bị chặn
+        RIÊNG với thông báo rõ ràng, vì đó là lỗi nhập liệu, không phải chồng
+        lấn. 2 khung SÁT RANH GIỚI (vd 18:00-19:00 và 19:00-20:00) được coi
+        là HỢP LỆ (không chồng lấn thật)."""
         n = self.table.rowCount()
-        on_times = []
+        rows = []
         for r in range(n):
-            sp_gio = self.table.cellWidget(r, 0)
-            sp_phut = self.table.cellWidget(r, 1)
-            if sp_gio is None or sp_phut is None:
+            sp_gb = self.table.cellWidget(r, 0)
+            sp_pb = self.table.cellWidget(r, 1)
+            sp_gt = self.table.cellWidget(r, 2)
+            sp_pt = self.table.cellWidget(r, 3)
+            if None in (sp_gb, sp_pb, sp_gt, sp_pt):
                 continue
-            on_times.append((sp_gio.value(), sp_phut.value()))
+            rows.append((r, sp_gb, sp_pb, sp_gt, sp_pt))
 
-        counts = {}
-        for t in on_times:
-            counts[t] = counts.get(t, 0) + 1
-        duplicated = {t for t, c in counts.items() if c > 1}
+        bad_rows = set()
+        messages = []
+        intervals = []
 
-        has_dup = len(duplicated) > 0
-        for r in range(n):
-            sp_gio = self.table.cellWidget(r, 0)
-            sp_phut = self.table.cellWidget(r, 1)
-            if sp_gio is None or sp_phut is None:
+        for i, (r, sp_gb, sp_pb, sp_gt, sp_pt) in enumerate(rows):
+            start = sp_gb.value() * 3600 + sp_pb.value() * 60
+            end = sp_gt.value() * 3600 + sp_pt.value() * 60
+            if start == end:
+                bad_rows.add(i)
+                messages.append(f"{sp_gb.value():02d}:{sp_pb.value():02d} có giờ bật = giờ tắt")
                 continue
-            t = (sp_gio.value(), sp_phut.value())
-            style = DUPLICATE_STYLE if t in duplicated else NORMAL_STYLE
-            sp_gio.setStyleSheet(style)
-            sp_phut.setStyleSheet(style)
+            intervals.append((i, start, end))
+
+        for a in range(len(intervals)):
+            ia, sa, ea = intervals[a]
+            for b in range(a + 1, len(intervals)):
+                ib, sb, eb = intervals[b]
+                if intervals_overlap(sa, ea, sb, eb):
+                    bad_rows.add(ia)
+                    bad_rows.add(ib)
+                    _, gb_a, pb_a, gt_a, pt_a = rows[ia]
+                    _, gb_b, pb_b, gt_b, pt_b = rows[ib]
+                    messages.append(
+                        f"{gb_a.value():02d}:{pb_a.value():02d}-{gt_a.value():02d}:{pt_a.value():02d} "
+                        f"chồng lấn {gb_b.value():02d}:{pb_b.value():02d}-{gt_b.value():02d}:{pt_b.value():02d}"
+                    )
+
+        has_dup = len(bad_rows) > 0
+        for i, (r, sp_gb, sp_pb, sp_gt, sp_pt) in enumerate(rows):
+            style = DUPLICATE_STYLE if i in bad_rows else NORMAL_STYLE
+            sp_gb.setStyleSheet(style)
+            sp_pb.setStyleSheet(style)
+            sp_gt.setStyleSheet(style)
+            sp_pt.setStyleSheet(style)
 
         if has_dup:
-            times_text = ", ".join(f"{g:02d}:{p:02d}" for g, p in sorted(duplicated))
-            self.lbl_warning.setText(f"⚠️ Trùng giờ bật: {times_text} — vui lòng chỉnh lại trước khi lưu.")
+            self.lbl_warning.setText("⚠️ " + "; ".join(messages) + " — vui lòng chỉnh lại trước khi lưu.")
         else:
             self.lbl_warning.setText("")
 

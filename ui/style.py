@@ -20,6 +20,7 @@ APP_STYLESHEET = f"""
 QWidget {{
     font-family: "Segoe UI", "Arial", sans-serif;
     color: {COLOR_TEXT_DARK};
+    font-size: 14px;
 }}
 
 QMainWindow, #centralArea {{
@@ -32,14 +33,14 @@ QMainWindow, #centralArea {{
 
 #headerTitle {{
     color: white;
-    font-size: 20px;
+    font-size:23px;
     font-weight: 700;
-    padding-left: 12px;
+    center: center;
 }}
 
 #headerClock {{
     color: white;
-    font-size: 14px;
+    font-size:17px;
     padding-right: 14px;
 }}
 
@@ -52,7 +53,7 @@ QPushButton#navButton {{
     color: white;
     border: none;
     border-right: 1px solid #2a6bc2;
-    font-size: 13px;
+    font-size:16px;
     font-weight: 600;
     padding: 10px 4px;
 }}
@@ -69,10 +70,10 @@ QPushButton#navButton:checked {{
 QGroupBox {{
     background-color: {COLOR_BG_WHITE};
     border: 1px solid #c9c2a0;
-    border-radius: 6px;
+    border-radius:0px;
     margin-top: 14px;
     font-weight: 700;
-    font-size: 13px;
+    font-size:16px;
     color: {COLOR_HEADER_BLUE_DARK};
 }}
 
@@ -85,22 +86,22 @@ QGroupBox::title {{
 QLabel[role="value"] {{
     background-color: #fbf8ec;
     border: 1px solid #b9b28e;
-    border-radius: 4px;
+    border-radius:0px;
     padding: 4px 8px;
-    font-size: 16px;
+    font-size:19px;
     font-weight: 700;
 }}
 
 QLabel[role="unit"] {{
     color: #6b6b6b;
-    font-size: 12px;
+    font-size:15px;
 }}
 
 QPushButton[role="toggleOn"] {{
     background-color: {COLOR_ON_GREEN};
     color: white;
     font-weight: 700;
-    border-radius: 6px;
+    border-radius:0px;
     border: 1px solid #218a3c;
 }}
 
@@ -108,7 +109,7 @@ QPushButton[role="toggleOff"] {{
     background-color: #d9d9d9;
     color: #444;
     font-weight: 700;
-    border-radius: 6px;
+    border-radius:0px;
     border: 1px solid #aaaaaa;
 }}
 
