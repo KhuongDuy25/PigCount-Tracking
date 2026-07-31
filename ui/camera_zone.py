@@ -91,8 +91,9 @@ from PyQt5.QtWidgets import (
 # Linux/macOS (phan biet hoa thuong), roi tu roi ve che do do mau ma khong
 # bao loi ro rang. Dung duong dan TUYET DOI (cung thu muc goc voi main.py)
 # de khong phu thuoc thu muc dang dung khi chay app.
-YOLO_MODEL_PATH = os.path.join(_BASE_DIR, "C:/Users/KhuongDuy/Downloads/Yolos26-200.pt")
-
+YOLO_MODEL_PATH = os.path.join(_BASE_DIR, "C:/Users/KhuongDuy/Downloads/Yolo26s-seg250.pt")
+#C:/Users/KhuongDuy/Downloads/Yolo26s-seg250.pt
+#C:/Users/KhuongDuy/Downloads/Yolos26-200.pt
 # Ngưỡng tin cậy tối thiểu để chấp nhận 1 phát hiện là "lợn"
 YOLO_CONF_THRESHOLD = 0.4
 
@@ -343,7 +344,7 @@ class CameraZoneWidget(QWidget):
 
         self.timer = QTimer(self)
         self.timer.timeout.connect(self._update_frame)
-        self.timer.start(66)  # ~15 FPS, đủ mượt; tăng lên 150-200ms nếu máy yếu / CPU-only
+        self.timer.start(20)  # ~15 FPS, đủ mượt; tăng lên 150-200ms nếu máy yếu / CPU-only
 
     # ------------------------------------------------------------------ UI
     def _build_ui(self):
