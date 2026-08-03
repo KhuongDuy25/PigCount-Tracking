@@ -58,6 +58,11 @@ ZONE_CONFIG_PATH = os.path.join(_BASE_DIR, "zone_config.json")  # zone MAC DINH 
 # gan cung stream_url trong code nua). Luu danh sach {ten, url} + camera
 # dang chon + che do (camera/demo) ra 1 file JSON o goc du an.
 CAMERA_CONFIG_PATH = os.path.join(_BASE_DIR, "camera_config.json")
+# SUA: THEM MOI - duong dan TUYET DOI toi file cau hinh ByteTrack rieng
+# (track_buffer tang len de bot mat ID khi mat dau ngan han) - dung duong
+# dan tuyet doi giong cac config khac o tren, tranh loi neu app duoc chay
+# tu 1 thu muc lam viec (working directory) khac thu muc goc du an.
+BYTETRACK_CONFIG_PATH = os.path.join(_BASE_DIR, "bytetrack_custom.yaml")
 
 # Chu ky tu dong thu ket noi lai (giay) khi dang o che do "camera" ma bi mat
 # ket noi - khong thu lai lien tuc moi frame (66ms) de tranh spam ket noi.
@@ -85,15 +90,19 @@ from PyQt5.QtWidgets import (
     QGroupBox, QComboBox, QMessageBox, QLineEdit, QListWidgetItem, QSizePolicy
 )
 
+# SUA: THEM MOI - dung chung 1 kieu "den LED" that (khong phai emoji
+# 🟢🟡🔴⚪) cho trang thai ket noi camera, dong bo voi dinh huong "khong
+# icon, chi chu + mau" cua toan app.
+from ui.style import tao_den_led, doi_mau_den_led, COLOR_ON_GREEN, COLOR_ALARM_RED, COLOR_WARNING_AMBER, COLOR_OFF_GRAY
+
 # ======================= CẤU HÌNH MODEL YOLO =======================
 # Duong dan model: dung DUNG hoa/thuong nhu file that tren dia ("Yolos26-200.pt",
 # chu Y hoa) - sai hoa/thuong se chay OK tren Windows nhung LOI IM LANG tren
 # Linux/macOS (phan biet hoa thuong), roi tu roi ve che do do mau ma khong
 # bao loi ro rang. Dung duong dan TUYET DOI (cung thu muc goc voi main.py)
 # de khong phu thuoc thu muc dang dung khi chay app.
-YOLO_MODEL_PATH = os.path.join(_BASE_DIR, "C:/Users/KhuongDuy/Downloads/Yolo26s-seg250.pt")
-#C:/Users/KhuongDuy/Downloads/Yolo26s-seg250.pt
-#C:/Users/KhuongDuy/Downloads/Yolos26-200.pt
+YOLO_MODEL_PATH = os.path.join(_BASE_DIR, "C:/Users/KhuongDuy/Downloads/Yolos26-200.pt")
+
 # Ngưỡng tin cậy tối thiểu để chấp nhận 1 phát hiện là "lợn"
 YOLO_CONF_THRESHOLD = 0.4
 
@@ -330,6 +339,13 @@ class CameraZoneWidget(QWidget):
 
         self.model = None
         self.model_ready = False
+        # SUA: THEM MOI - co BAT/TAT nhan dien. True = binh thuong (van
+        # chay YOLO/fallback mau nhu cu). False = CHI hien video + duong
+        # vien vung mang an, bo qua HOAN TOAN moi tinh toan AI - dung khi
+        # nguoi dung chi can XEM camera (canh vi tri vat ly, tiet kiem tai
+        # nguyen luc chi can 1 camera dang "nhan dien that", camera con lai
+        # chi can xem).
+        self.detection_enabled = True
 
         # --- Trang thai tracking (chi song trong RAM/phien chay hien tai) ---
         self.tracker_id_to_real_id = {}   # tracker_id (ByteTrack) -> real_id (nguon su that = mau)
@@ -344,7 +360,7 @@ class CameraZoneWidget(QWidget):
 
         self.timer = QTimer(self)
         self.timer.timeout.connect(self._update_frame)
-        self.timer.start(20)  # ~15 FPS, đủ mượt; tăng lên 150-200ms nếu máy yếu / CPU-only
+        self.timer.start(66)  # ~15 FPS, đủ mượt; tăng lên 150-200ms nếu máy yếu / CPU-only
 
     # ------------------------------------------------------------------ UI
     def _build_ui(self):
@@ -354,6 +370,27 @@ class CameraZoneWidget(QWidget):
         root.addLayout(body)
 
         # -- video label (nhận sự kiện chuột để vẽ vùng / hiệu chỉnh màu) --
+        video_col = QVBoxLayout()
+        body.addLayout(video_col)
+
+        # SUA: THEM MOI - hang dieu khien BAT/TAT NHAN DIEN, dat NGAY TREN
+        # video de bam nhanh trong luc dang nhin video (vd luc canh vi tri
+        # camera vat ly, hoac muon giai phong tai nguyen khi chi can XEM 1
+        # camera ma khong can du lieu vi tri luc do). Khi tat: bo qua HOAN
+        # TOAN ca 2 nhanh detect (YOLO lan fallback mau) trong _update_frame(),
+        # chi con doc + hien thi khung hinh + ve duong vien vung mang an
+        # (khong phu thuoc AI de ve).
+        hang_detect = QHBoxLayout()
+        self.btn_toggle_detect = QPushButton("TẮT NHẬN DIỆN (CHỈ XEM CAM)")
+        self.btn_toggle_detect.setCheckable(True)
+        self.btn_toggle_detect.setStyleSheet(
+            "QPushButton { background:#1857a4; color:white; font-weight:700; border-radius:0px; padding:6px; }"
+            "QPushButton:checked { background:#8a8a8a; }"
+        )
+        self.btn_toggle_detect.clicked.connect(self._toggle_detection)
+        hang_detect.addWidget(self.btn_toggle_detect)
+        video_col.addLayout(hang_detect)
+
         self.video_label = QLabel()
         self.video_label.setFixedSize(self.frame_w, self.frame_h)
         self.video_label.setStyleSheet("background:#000; border:2px solid #123f7c; border-radius:0px;")
@@ -361,7 +398,7 @@ class CameraZoneWidget(QWidget):
         self.video_label.setMouseTracking(True)
         self.video_label.mousePressEvent = self._on_mouse_press
         self.video_label.mouseDoubleClickEvent = self._on_mouse_double_click
-        body.addWidget(self.video_label)
+        video_col.addWidget(self.video_label)
 
         # -- panel điều khiển bên phải --
         side = QVBoxLayout()
@@ -401,10 +438,10 @@ class CameraZoneWidget(QWidget):
         bottom_controls_row.addWidget(gb, 1)
 
         # ---- MOI: khoi HIEU CHINH MAU ----
-        gb_cal = QGroupBox("🎯 Hiệu chỉnh màu (test camera thực tế)")
+        gb_cal = QGroupBox("HIỆU CHỈNH MÀU (TEST CAMERA THỰC TẾ)")
         gb_cal_lay = QVBoxLayout(gb_cal)
 
-        self.btn_calibrate = QPushButton("Bật chế độ đo màu (click vào điểm đã tô)")
+        self.btn_calibrate = QPushButton("BẬT CHẾ ĐỘ ĐO MÀU (CLICK VÀO ĐIỂM ĐÃ TÔ)")
         self.btn_calibrate.setCheckable(True)
         self.btn_calibrate.clicked.connect(self._toggle_calibrate)
         gb_cal_lay.addWidget(self.btn_calibrate)
@@ -414,7 +451,7 @@ class CameraZoneWidget(QWidget):
         self.lbl_calibration_result = QLabel("Chưa đo màu nào.")
         self.lbl_calibration_result.setWordWrap(True)
         self.lbl_calibration_result.setStyleSheet(
-            "background:#fbf8ec; border:1px solid #b9b28e; border-radius:6px; "
+            "background:#fbf8ec; border:1px solid #b9b28e; border-radius:0px; "
             "padding:8px; font-family:monospace; font-size:12px; color:#1e2a3a;"
         )
         gb_cal_lay.addWidget(self.lbl_calibration_result)
@@ -426,10 +463,10 @@ class CameraZoneWidget(QWidget):
         row_name.addWidget(self.input_new_id_name)
         gb_cal_lay.addLayout(row_name)
 
-        self.btn_save_new_id = QPushButton("💾 Lưu thành ID mới")
+        self.btn_save_new_id = QPushButton("LƯU THÀNH ID MỚI")
         self.btn_save_new_id.setEnabled(False)  # chi bat sau khi da do duoc 1 mau
         self.btn_save_new_id.setStyleSheet(
-            "background:#1857a4; color:white; font-weight:700; border-radius:6px; padding:6px;"
+            "background:#1857a4; color:white; font-weight:700; border-radius:0px; padding:6px;"
         )
         self.btn_save_new_id.clicked.connect(self._luu_id_moi_tu_hieu_chinh)
         gb_cal_lay.addWidget(self.btn_save_new_id)
@@ -439,7 +476,7 @@ class CameraZoneWidget(QWidget):
         self.list_saved_ids.setMaximumHeight(100)
         gb_cal_lay.addWidget(self.list_saved_ids)
 
-        self.btn_delete_id = QPushButton("Xóa ID đang chọn")
+        self.btn_delete_id = QPushButton("XÓA ID ĐANG CHỌN")
         self.btn_delete_id.clicked.connect(self._xoa_id_dang_chon)
         gb_cal_lay.addWidget(self.btn_delete_id)
 
@@ -460,7 +497,7 @@ class CameraZoneWidget(QWidget):
 
         # ---- Chon che do: Ket noi Camera / Demo ----
         self.combo_mode = QComboBox()
-        self.combo_mode.addItems(["🔌 Kết nối Camera", "🎬 Chế độ Demo"])
+        self.combo_mode.addItems(["KẾT NỐI CAMERA", "CHẾ ĐỘ DEMO"])
         self.combo_mode.setCurrentIndex(0 if self.source_mode == "camera" else 1)
         self.combo_mode.currentIndexChanged.connect(self._on_mode_changed)
         gb3_lay.addWidget(self.combo_mode)
@@ -469,12 +506,12 @@ class CameraZoneWidget(QWidget):
         row_pick = QHBoxLayout()
         self.combo_camera_list = QComboBox()
         row_pick.addWidget(self.combo_camera_list, 1)
-        self.btn_connect_selected = QPushButton("🔌 Kết nối")
+        self.btn_connect_selected = QPushButton("KẾT NỐI")
         self.btn_connect_selected.clicked.connect(self._on_connect_clicked)
         row_pick.addWidget(self.btn_connect_selected)
         gb3_lay.addLayout(row_pick)
 
-        self.btn_delete_camera = QPushButton("🗑️ Xóa camera đang chọn")
+        self.btn_delete_camera = QPushButton("XÓA CAMERA ĐANG CHỌN")
         self.btn_delete_camera.clicked.connect(self._on_delete_camera)
         gb3_lay.addWidget(self.btn_delete_camera)
 
@@ -488,17 +525,24 @@ class CameraZoneWidget(QWidget):
         self.input_cam_url.setPlaceholderText("URL, vd: http://192.168.1.50:8080/video")
         gb3_lay.addWidget(self.input_cam_url)
 
-        self.btn_save_new_camera = QPushButton("💾 Lưu camera")
+        self.btn_save_new_camera = QPushButton("LƯU CAMERA")
         self.btn_save_new_camera.setStyleSheet(
-            "background:#1857a4; color:white; font-weight:700; border-radius:6px; padding:5px;"
+            "background:#1857a4; color:white; font-weight:700; border-radius:0px; padding:5px;"
         )
         self.btn_save_new_camera.clicked.connect(self._on_save_new_camera)
         gb3_lay.addWidget(self.btn_save_new_camera)
 
+        # SUA: THEM MOI - thay label 1 dong (truoc day tu ghep emoji vao
+        # dau chuoi) bang 1 hang ngang: den LED THAT (widget hinh tron) +
+        # chu trang thai, dung y het kieu "den bao" tren tu dieu khien.
+        hang_trang_thai_ket_noi = QHBoxLayout()
+        self.den_ket_noi = tao_den_led(COLOR_OFF_GRAY)
+        hang_trang_thai_ket_noi.addWidget(self.den_ket_noi)
         self.lbl_connection_status = QLabel("")
         self.lbl_connection_status.setWordWrap(True)
         self.lbl_connection_status.setStyleSheet("font-size:13px; font-weight:700;")
-        gb3_lay.addWidget(self.lbl_connection_status)
+        hang_trang_thai_ket_noi.addWidget(self.lbl_connection_status, 1)
+        gb3_lay.addLayout(hang_trang_thai_ket_noi)
 
         self.lbl_model_status = QLabel("Model: đang tải...")
         self.lbl_model_status.setWordWrap(True)
@@ -600,20 +644,25 @@ class CameraZoneWidget(QWidget):
 
     def _update_connection_status_label(self):
         if self.source_mode == "demo":
-            self.lbl_connection_status.setText("⚪ Đang ở chế độ Demo (không kết nối camera)")
+            doi_mau_den_led(self.den_ket_noi, COLOR_OFF_GRAY)
+            self.lbl_connection_status.setText("Đang ở chế độ Demo (không kết nối camera)")
             self.lbl_connection_status.setStyleSheet("color:#666; font-size:13px; font-weight:700;")
         elif not self.active_camera_name:
-            self.lbl_connection_status.setText("⚠️ Chưa chọn camera nào - hãy thêm/chọn 1 camera")
+            doi_mau_den_led(self.den_ket_noi, COLOR_WARNING_AMBER)
+            self.lbl_connection_status.setText("Chưa chọn camera nào - hãy thêm/chọn 1 camera")
             self.lbl_connection_status.setStyleSheet("color:#b8860b; font-size:13px; font-weight:700;")
         elif getattr(self, "_dang_ket_noi", False):
-            self.lbl_connection_status.setText(f"🟡 Đang kết nối tới '{self.active_camera_name}'...")
+            doi_mau_den_led(self.den_ket_noi, COLOR_WARNING_AMBER)
+            self.lbl_connection_status.setText(f"Đang kết nối tới '{self.active_camera_name}'...")
             self.lbl_connection_status.setStyleSheet("color:#b8860b; font-size:13px; font-weight:700;")
         elif self.is_connected:
-            self.lbl_connection_status.setText(f"🟢 Đã kết nối: {self.active_camera_name}")
+            doi_mau_den_led(self.den_ket_noi, COLOR_ON_GREEN)
+            self.lbl_connection_status.setText(f"Đã kết nối: {self.active_camera_name}")
             self.lbl_connection_status.setStyleSheet("color:#2fae4e; font-size:13px; font-weight:700;")
         else:
+            doi_mau_den_led(self.den_ket_noi, COLOR_ALARM_RED)
             self.lbl_connection_status.setText(
-                f"🔴 Mất kết nối tới '{self.active_camera_name}' - đang tự thử lại mỗi {RECONNECT_INTERVAL_SEC}s"
+                f"Mất kết nối tới '{self.active_camera_name}' - đang tự thử lại mỗi {RECONNECT_INTERVAL_SEC}s"
             )
             self.lbl_connection_status.setStyleSheet("color:#d13c3c; font-size:13px; font-weight:700;")
 
@@ -755,30 +804,42 @@ class CameraZoneWidget(QWidget):
         thiếu file model), chương trình tự rơi về chế độ DÒ MÀU THUẦN TÚY
         (color-blob) để vẫn hoạt động được, chỉ là kém chính xác hơn."""
         if YOLO is None:
+            self.lbl_model_status.setProperty("role", "status-warning")
             self.lbl_model_status.setText(
-                "⚠️ Chưa cài 'ultralytics' -> đang dùng chế độ dò màu thuần túy.\n"
+                "Chưa cài 'ultralytics' -> đang dùng chế độ dò màu thuần túy.\n"
                 "Chạy: pip install ultralytics"
             )
+            self.lbl_model_status.style().unpolish(self.lbl_model_status)
+            self.lbl_model_status.style().polish(self.lbl_model_status)
             return
         if not os.path.exists(YOLO_MODEL_PATH):
+            self.lbl_model_status.setProperty("role", "status-warning")
             self.lbl_model_status.setText(
-                f"⚠️ Không tìm thấy model tại: {YOLO_MODEL_PATH}\n"
+                f"Không tìm thấy model tại: {YOLO_MODEL_PATH}\n"
                 "-> đang dùng chế độ dò màu thuần túy."
             )
+            self.lbl_model_status.style().unpolish(self.lbl_model_status)
+            self.lbl_model_status.style().polish(self.lbl_model_status)
             return
         try:
             self.model = YOLO(YOLO_MODEL_PATH)
             self.model_ready = True
             class_list = ", ".join(f"{i}:{n}" for i, n in self.model.names.items())
+            self.lbl_model_status.setProperty("role", "status-ok")
             self.lbl_model_status.setText(
-                f"✅ Model đã sẵn sàng: {YOLO_MODEL_PATH}\n"
+                f"Model đã sẵn sàng: {YOLO_MODEL_PATH}\n"
                 f"Class: {class_list}\n"
                 f"Đang chỉ nhận diện: {', '.join(TARGET_CLASS_NAMES)}"
             )
+            self.lbl_model_status.style().unpolish(self.lbl_model_status)
+            self.lbl_model_status.style().polish(self.lbl_model_status)
         except Exception as e:
             self.model = None
             self.model_ready = False
-            self.lbl_model_status.setText(f"⚠️ Lỗi nạp model: {e}")
+            self.lbl_model_status.setProperty("role", "status-error")
+            self.lbl_model_status.setText(f"Lỗi nạp model: {e}")
+            self.lbl_model_status.style().unpolish(self.lbl_model_status)
+            self.lbl_model_status.style().polish(self.lbl_model_status)
 
     # ------------------------------------------------------------ drawing
     def _toggle_drawing(self, checked):
@@ -802,6 +863,13 @@ class CameraZoneWidget(QWidget):
         self.btn_draw.setChecked(False)
         self.btn_draw.setText("Bắt đầu vẽ vùng máng ăn")
         self._save_zone_to_file()  # luu lai trang thai "da xoa" -> lan sau mo app khong bi hien lai vung cu
+
+    # ------------------------------------------------------ bat/tat nhan dien
+    def _toggle_detection(self, checked):
+        self.detection_enabled = not checked  # nut dang o trang thai "checked" nghia la DA BAM TAT
+        self.btn_toggle_detect.setText(
+            "BẬT LẠI NHẬN DIỆN" if checked else "TẮT NHẬN DIỆN (CHỈ XEM CAM)"
+        )
 
     # ------------------------------------------------------ hieu chinh mau
     def _toggle_calibrate(self, checked):
@@ -937,7 +1005,7 @@ class CameraZoneWidget(QWidget):
         if id_chong_lan:
             danh_sach = ", ".join(id_chong_lan)
             xac_nhan = QMessageBox.question(
-                self, "⚠ Cảnh báo trùng dải màu",
+                self, "CẢNH BÁO TRÙNG DẢI MÀU",
                 f"Dải Hue vừa đo ({hue_lo_moi}-{hue_hi_moi}, đã tính cả sai số "
                 f"±{COLOR_MATCH_HUE_MARGIN}) CHỒNG LẤN với ID đã có sẵn: {danh_sach}.\n\n"
                 f"Nếu vẫn lưu, hệ thống sẽ nhận diện KHÔNG ỔN ĐỊNH giữa '{name}' và "
@@ -1286,7 +1354,12 @@ class CameraZoneWidget(QWidget):
         # persist=True: giu bo nho tracking cua ByteTrack giua cac lan goi
         # (khong phai persist qua restart app - van la trong RAM cua tien
         # trinh dang chay, dung y nghia "tracker tam thoi" da giai thich)
-        results = self.model.track(frame_bgr, conf=YOLO_CONF_THRESHOLD, persist=True, verbose=False)
+        # SUA: dung file cau hinh ByteTrack RIENG (bytetrack_custom.yaml, o
+        # thu muc goc du an) thay vi mac dinh cua ultralytics - tang
+        # track_buffer tu 30 len 60 khung hinh, giup nhung lan MAT DAU NGAN
+        # HAN (anh mo do di chuyen nhanh) khong bi xoa track va gan ID moi.
+        results = self.model.track(frame_bgr, conf=YOLO_CONF_THRESHOLD, persist=True,
+                                    tracker=BYTETRACK_CONFIG_PATH, verbose=False)
         if not results:
             return frame_bgr, []
 
@@ -1361,6 +1434,17 @@ class CameraZoneWidget(QWidget):
                 "positions": positions_dict,
                 "zone": zone_norm,
                 "zone_closed": self.zone_closed,
+                # SUA: THEM MOI - gui kem ty le khung hinh THAT (frame_w x
+                # frame_h) sang ChartTab, de Heatmap/Trajectory ve DUNG TY
+                # LE nhu video that, khong bi keo gian/bop meo do khung ve
+                # (Figure) co kich thuoc khac ty le voi khung hinh camera.
+                "frame_w": self.frame_w,
+                "frame_h": self.frame_h,
+                # SUA: THEM MOI (Giai doan 1 - da camera) - gui kem TEN
+                # CAMERA dang active, de ChartTab ghi vao CSV va phan biet
+                # duoc du lieu vi tri den tu chuong/camera nao. "Demo" khi
+                # dang o che do demo (khong co camera that).
+                "camera_id": self.active_camera_name or "Demo",
             })
 
         return frame_bgr, found_ids
@@ -1441,7 +1525,12 @@ class CameraZoneWidget(QWidget):
         # thuc te, khong bi lan boi khung/chu vua ve de len tren.
         self._last_frame_bgr = frame.copy()
 
-        if cv2 is not None and self.model_ready and self.model is not None:
+        if not self.detection_enabled:
+            # SUA: THEM MOI - CHI XEM CAMERA, bo qua HOAN TOAN ca 2 nhanh
+            # detect (khong goi YOLO, khong goi fallback mau) - tiet kiem
+            # toi da tai nguyen CPU/GPU luc chi can nhin video.
+            ids_in_zone = []
+        elif cv2 is not None and self.model_ready and self.model is not None:
             frame, ids_in_zone = self._detect_by_yolo_track_color(frame)
         else:
             frame, ids_in_zone = self._detect_by_color_blob(frame)
@@ -1450,9 +1539,11 @@ class CameraZoneWidget(QWidget):
 
         # cập nhật danh sách ID đang ăn
         self.list_ids.clear()
-        if ids_in_zone:
+        if not self.detection_enabled:
+            self.list_ids.addItem("(Đang tắt nhận diện - chỉ xem camera)")
+        elif ids_in_zone:
             for pig_id in ids_in_zone:
-                self.list_ids.addItem(f"🐷 {pig_id} — đang ăn tại máng")
+                self.list_ids.addItem(f"{pig_id} — đang ăn tại máng")
         else:
             self.list_ids.addItem("(Không có lợn nào trong vùng máng ăn)")
         self.zone_status_changed.emit(ids_in_zone)
