@@ -64,6 +64,14 @@ MAX_DIEM_VI_TRI_MOI_ID = 4000
 # muot, ma khong lam file CSV phinh to vo ich va khong lam I/O dia lien tuc.
 GHI_TOI_THIEU_MOI_GIAY = 1.0
 
+# SUA: THEM MOI - nguong khoang cach thoi gian TOI DA (giay) giua 2 diem
+# LIEN TIEP de con TINH LA THOI GIAN LIEN TUC o trong/ngoai vung mang an.
+# Neu khoang cach giua 2 diem lon hon nguong nay (vd camera mat dau con
+# vat 1 luc, app bi tat/mo lai, hoac con vat ra khoi khung hinh) thi
+# KHONG cong don khoang do vao tong thoi gian o mang - vi khong the chac
+# chan con vat van dung yen lien tuc trong khoang bi mat du lieu do.
+NGUONG_GAP_TOI_DA_GIAY = 5.0
+
 _BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LOGS_DIR = os.path.join(_BASE_DIR, "logs")
 os.makedirs(LOGS_DIR, exist_ok=True)
@@ -134,6 +142,16 @@ def _lam_min_gaussian_2d(mang, sigma=1.6):
     ket_qua = np.apply_along_axis(lambda m: np.convolve(m, nhan, mode="same"), axis=1, arr=tam)
     return ket_qua
 
+
+
+def _dinh_dang_thoi_luong(tong_giay):
+    """Doi so giay (float) sang chuoi de doc, vd 754.2 -> '12 phút 34 giây'.
+    Duoi 60 giay chi hien so giay (vd '45 giây'), khong hien '0 phút'."""
+    tong_giay = int(round(tong_giay))
+    phut, giay = divmod(tong_giay, 60)
+    if phut > 0:
+        return f"{phut} phút {giay} giây"
+    return f"{giay} giây"
 
 
 def _mau_mac_dinh_cho_id(real_id):
@@ -373,10 +391,6 @@ class ChartTab(QWidget):
         self.combo_traj.addItem("Chưa có dữ liệu", userData=None)
         self.combo_traj.currentIndexChanged.connect(lambda _: self._ve_trajectory())
         ctr_traj.addWidget(self.combo_traj, 1)
-        self.lbl_mau_traj = QLabel("  ")
-        self.lbl_mau_traj.setFixedSize(18, 18)
-        self.lbl_mau_traj.setStyleSheet("background:#1857a4; border:1px solid #888;")
-        ctr_traj.addWidget(self.lbl_mau_traj)
         tl.addLayout(ctr_traj)
 
         khu_giua = QHBoxLayout()
@@ -389,10 +403,12 @@ class ChartTab(QWidget):
         info_lay = QVBoxLayout(gb_info)
         self.lbl_info_id = QLabel("ID lợn: —")
         self.lbl_info_luot = QLabel("Lượt vào máng ăn: —")
-        for lbl in (self.lbl_info_id, self.lbl_info_luot):
+        self.lbl_info_thoigian = QLabel("Thời gian ở máng ăn: —")
+        for lbl in (self.lbl_info_id, self.lbl_info_luot, self.lbl_info_thoigian):
             lbl.setStyleSheet("font-size:12px; padding:2px 0;")
         info_lay.addWidget(self.lbl_info_id)
         info_lay.addWidget(self.lbl_info_luot)
+        info_lay.addWidget(self.lbl_info_thoigian)
         info_lay.addStretch(1)
         khu_giua.addWidget(gb_info, 1)
 
@@ -583,12 +599,30 @@ class ChartTab(QWidget):
         """Do dong danh sach camera/chuong TU DU LIEU THAT co trong ngay
         dang chon (quet file CSV), tuong tu cach danh sach ID lon duoc do
         dong o _cap_nhat_danh_sach_id(). Tu dong chon camera DAU TIEN tim
-        thay neu nguoi dung chua tung chon camera nao."""
+        thay neu nguoi dung chua tung chon camera nao.
+
+        SUA: BUG THAT tung gay hien TRUNG LAP camera trong combo (vd
+        "cam1" xuat hien 2 lan) - da tu kiem chung: self.combo_camera.
+        addItem() CO THE TU DONG kich hoat currentIndexChanged() NGAY LAP
+        TUC (dac biet ro rang khi addItem() DAU TIEN lam so luong item tu
+        0 len 1 - Qt tu dong chon o index 0 va phat tin hieu). Tin hieu do
+        goi thang toi _doi_camera_xem() -> _doc_lai_va_ve_ban_do() ->
+        goi NGUOC LAI chinh ham nay MOT LAN NUA trong luc vong lap 'for cam
+        in cac_camera' o DUOI con dang chay do - lam vong lap NGOAI tiep
+        tuc voi 'da_co'/'count()' da LOI THOI (khong con phan anh dung
+        trang thai MOI vua duoc vong lap TRONG them vao), dan den them
+        trung 1 camera. Truoc day CHI chan tin hieu quanh dong
+        setCurrentIndex() cuoi ham - CHUA DU, vi addItem() cung co the tu
+        kich hoat tin hieu. Gio chan tin hieu cho CA QUA TRINH thao tac
+        combo (ca vong lap addItem/removeItem LAN setCurrentIndex), roi tu
+        tay dong bo lai self.selected_camera sau khi da mo tin hieu."""
         cac_camera = sorted(_liet_ke_camera_trong_ngay(self.selected_date))
 
         dang_co_du_lieu = self.combo_camera.currentData() is not None or self.combo_camera.count() > 1
         da_co = {self.combo_camera.itemData(i) for i in range(self.combo_camera.count())}
         co_them_moi = False
+
+        self.combo_camera.blockSignals(True)
         for cam in cac_camera:
             if cam not in da_co:
                 if self.combo_camera.count() == 1 and self.combo_camera.itemData(0) is None:
@@ -597,12 +631,10 @@ class ChartTab(QWidget):
                 co_them_moi = True
 
         if not dang_co_du_lieu and co_them_moi:
-            # SUA: chan tin hieu tam thoi khi tu dong chon - tranh goi lai
-            # _doi_camera_xem() -> _doc_lai_va_ve_ban_do() 1 lan thua (ham
-            # nay dang chay dang do, khong can goi de quy vao chinh no).
-            self.combo_camera.blockSignals(True)
             self.combo_camera.setCurrentIndex(0)
-            self.combo_camera.blockSignals(False)
+        self.combo_camera.blockSignals(False)
+
+        if not dang_co_du_lieu and co_them_moi:
             self.selected_camera = self.combo_camera.currentData()
 
     def _cap_nhat_danh_sach_id(self):
@@ -687,7 +719,6 @@ class ChartTab(QWidget):
 
         if real_id and points:
             mau = _mau_mac_dinh_cho_id(real_id)
-            self.lbl_mau_traj.setStyleSheet(f"background:{mau}; border:1px solid #888;")
             xs = [p[0] for p in points]
             ys = [p[1] for p in points]
             self.ax_traj.plot(xs, ys, color=mau, linewidth=1, alpha=0.7, zorder=2)
@@ -703,11 +734,17 @@ class ChartTab(QWidget):
                 f"Lượt vào máng ăn: {luot_vao}" if luot_vao is not None
                 else "Lượt vào máng ăn: (chưa vẽ vùng máng ăn ở tab HOME)"
             )
+            thoi_gian_giay = self._tinh_thoi_gian_o_trong_mang(points)
+            self.lbl_info_thoigian.setText(
+                f"Thời gian ở máng ăn: {_dinh_dang_thoi_luong(thoi_gian_giay)}" if thoi_gian_giay is not None
+                else "Thời gian ở máng ăn: (chưa vẽ vùng máng ăn ở tab HOME)"
+            )
         else:
             self.ax_traj.text(0.5, 0.5, "Chưa có dữ liệu đường đi",
                                ha="center", va="center", color="#999")
             self.lbl_info_id.setText("ID lợn: —")
             self.lbl_info_luot.setText("Lượt vào máng ăn: —")
+            self.lbl_info_thoigian.setText("Thời gian ở máng ăn: —")
 
         self._trang_tri_truc(self.ax_traj)
         self.figure_traj.tight_layout()
@@ -730,6 +767,35 @@ class ChartTab(QWidget):
                 so_luot += 1
             dang_trong = trong_vung
         return so_luot
+
+    def _tinh_thoi_gian_o_trong_mang(self, points):
+        """Tinh TONG THOI GIAN (giay) o TRONG vung mang an trong ngay dang
+        chon, dua tren khoang cach thoi gian GIUA CAC DIEM DA GHI LIEN
+        TIEP (moi diem CSV cach nhau ~1 giay do throttle ghi
+        GHI_TOI_THIEU_MOI_GIAY). Voi moi cap diem lien tiep (i, i+1): neu
+        diem i dang O TRONG vung VA khoang cach thoi gian giua 2 diem
+        KHONG QUA LON (duoi NGUONG_GAP_TOI_DA_GIAY - tuc KHONG bi mat dau/
+        gian doan du lieu giua chung), cong khoang thoi gian do vao tong.
+        Neu khoang cach qua lon (vd camera mat dau con vat, app tat/mo
+        lai...) thi BO QUA doan do - khong the chac chan con vat van dung
+        yen trong mang suot khoang thoi gian bi mat du lieu.
+
+        Tra ve None neu chua co vung mang an nao duoc ve/dong o tab HOME
+        (giong _dem_luot_vao_mang, de dong bo cach bao 'chua co du lieu')."""
+        if not (self.zone_norm and self.zone_closed and len(self.zone_norm) >= 3):
+            return None
+        duong_bao = MplPath(self.zone_norm)
+        diem_da_sap_xep = sorted(points, key=lambda p: p[2])
+        tong_giay = 0.0
+        for i in range(len(diem_da_sap_xep) - 1):
+            x1, y1, ts1 = diem_da_sap_xep[i]
+            _x2, _y2, ts2 = diem_da_sap_xep[i + 1]
+            khoang_cach = ts2 - ts1
+            if khoang_cach <= 0 or khoang_cach > NGUONG_GAP_TOI_DA_GIAY:
+                continue  # gian doan du lieu qua lon - khong tinh la lien tuc o trong mang
+            if duong_bao.contains_point((x1, y1)):
+                tong_giay += khoang_cach
+        return tong_giay
 
     def _ve_vien_vung_mang_an(self, ax):
         if self.zone_norm and self.zone_closed and len(self.zone_norm) >= 3:
