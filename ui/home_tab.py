@@ -30,9 +30,12 @@ from ui.camera_zone import CameraZoneWidget
 
 
 # ----------------------------------------------------------------------
-def sensor_card(icon, label, unit=""):
-    """1 ô cảm biến kiểu hộp bo góc: icon + tên nhỏ phía trên, giá trị to
-    phía dưới - giống đúng bố cục 4 ô 'Cảm biến môi trường' ở ảnh tham khảo."""
+def sensor_card(label, unit=""):
+    """1 ô cảm biến kiểu hộp: tên nhỏ phía trên, giá trị to phía dưới -
+    giống đúng bố cục 4 ô 'Cảm biến môi trường' ở ảnh tham khảo.
+    SUA: BO tham so icon (khong con dung emoji) theo dinh huong giao dien
+    "khong icon, chi chu + mau" - CHU IN HOA cho ten cam bien, font so
+    monospace cho gia tri de cac chu so THANG HANG voi nhau."""
     frame = QFrame()
     frame.setStyleSheet(
         "QFrame { background:#fbf8ec; }"
@@ -42,16 +45,15 @@ def sensor_card(icon, label, unit=""):
     lay.setSpacing(2)
 
     top = QHBoxLayout()
-    top.addWidget(QLabel(icon))
-    lbl_name = QLabel(label)
-    lbl_name.setStyleSheet("font-size:14px; color:#666;")
+    lbl_name = QLabel(label.upper())
+    lbl_name.setStyleSheet("font-size:13px; color:#666; font-weight:600; letter-spacing:0.5px;")
     top.addWidget(lbl_name)
     top.addStretch(1)
     lay.addLayout(top)
 
     row_val = QHBoxLayout()
     lbl_val = QLabel("--")
-    lbl_val.setStyleSheet("font-size:25px; font-weight:800; color:#1857a4;")
+    lbl_val.setStyleSheet('font-size:25px; font-weight:800; color:#1857a4; font-family:"Consolas", monospace;')
     row_val.addWidget(lbl_val)
     if unit:
         lbl_unit = QLabel(unit)
@@ -63,9 +65,10 @@ def sensor_card(icon, label, unit=""):
     return frame, lbl_val
 
 
-def device_status_card(icon, label):
-    """1 ô trong khối 'Cơ cấu chấp hành' - icon + tên + trạng thái ON/OFF
-    (CHỈ HIỂN THỊ, không phải nút bấm - muốn bật/tắt tay thì sang tab MANUAL)."""
+def device_status_card(label):
+    """1 ô trong khối 'Cơ cấu chấp hành' - tên + trạng thái ON/OFF (CHỈ
+    HIỂN THỊ, không phải nút bấm - muốn bật/tắt tay thì sang tab MANUAL).
+    SUA: BO tham so icon theo dinh huong "khong icon, chi chu + mau"."""
     frame = QFrame()
     frame.setStyleSheet(
         "QFrame { background:#fbf8ec; }"
@@ -75,9 +78,8 @@ def device_status_card(icon, label):
     lay.setSpacing(4)
 
     top = QHBoxLayout()
-    top.addWidget(QLabel(icon))
-    lbl_name = QLabel(label)
-    lbl_name.setStyleSheet("font-weight:700; font-size:15px;")
+    lbl_name = QLabel(label.upper())
+    lbl_name.setStyleSheet("font-weight:700; font-size:14px; letter-spacing:0.5px;")
     top.addWidget(lbl_name)
     top.addStretch(1)
     lay.addLayout(top)
@@ -104,17 +106,19 @@ class StatusDot(QLabel):
         self.setStyleSheet(f"background:{color}; border-radius:9px; border:1px solid #555;")
 
 
-# (icon, nhãn, virtual_pin) — 8 relay, KHÔNG gồm "Cho ăn" (V6 là nút xung,
+# (nhãn, virtual_pin) — 8 relay, KHÔNG gồm "Cho ăn" (V6 là nút xung,
 # không phải trạng thái bật/tắt ổn định nên không hợp để hiện ON/OFF ở đây)
+# SUA: BO HAN truong icon (truoc day la phan tu dau tien cua tuple) theo
+# dinh huong giao dien "khong icon, chi chu + mau".
 ACTUATOR_ROWS = [
-    ("🌀", "Quạt Thổi", "V7"),
-    ("🌀", "Quạt Hút", "V8"),
-    ("💡", "Đèn", "V9"),
-    ("🔥", "Đèn Sưởi", "V10"),
-    ("🚰", "Bơm Máng", "V11"),
-    ("🧽", "Bơm Sàn", "V12"),
-    ("🚿", "Bơm Tắm", "V13"),
-    ("💦", "Bơm Phun Sương", "V14"),
+    ("Quạt Thổi", "V7"),
+    ("Quạt Hút", "V8"),
+    ("Đèn", "V9"),
+    ("Đèn Sưởi", "V10"),
+    ("Bơm Máng", "V11"),
+    ("Bơm Sàn", "V12"),
+    ("Bơm Tắm", "V13"),
+    ("Bơm Phun Sương", "V14"),
 ]
 
 
@@ -150,13 +154,13 @@ class HomeTab(QWidget):
         sl = QGridLayout(gb_sensor)
         sl.setSpacing(10)
 
-        card, self.lbl_temp = sensor_card("🌡️", "Nhiệt độ", "°C")
+        card, self.lbl_temp = sensor_card("Nhiệt độ", "°C")
         sl.addWidget(card, 0, 0)
-        card, self.lbl_cam = sensor_card("🌾", "Cám tồn", "g")
+        card, self.lbl_cam = sensor_card("Cám tồn", "g")
         sl.addWidget(card, 0, 1)
-        card, self.lbl_humi = sensor_card("💧", "Độ ẩm", "%")
+        card, self.lbl_humi = sensor_card("Độ ẩm", "%")
         sl.addWidget(card, 1, 0)
-        card, self.lbl_water = sensor_card("🚰", "Mực nước")
+        card, self.lbl_water = sensor_card("Mực nước")
         sl.addWidget(card, 1, 1)
         left.addWidget(gb_sensor)
 
@@ -194,17 +198,17 @@ class HomeTab(QWidget):
 
         gb_stat = QGroupBox("Thống kê hôm nay")
         stl = QGridLayout(gb_stat)
-        stl.addWidget(QLabel("🍽️ Lần cho ăn"), 0, 0)
+        stl.addWidget(QLabel("LẦN CHO ĂN"), 0, 0)
         self.lbl_stat_an = QLabel("0")
-        self.lbl_stat_an.setStyleSheet("font-weight:700;")
+        self.lbl_stat_an.setStyleSheet('font-weight:700; font-family:"Consolas", monospace;')
         stl.addWidget(self.lbl_stat_an, 0, 1)
-        stl.addWidget(QLabel("🚿 Lần tắm"), 1, 0)
+        stl.addWidget(QLabel("LẦN TẮM"), 1, 0)
         self.lbl_stat_tam = QLabel("0")
-        self.lbl_stat_tam.setStyleSheet("font-weight:700;")
+        self.lbl_stat_tam.setStyleSheet('font-weight:700; font-family:"Consolas", monospace;')
         stl.addWidget(self.lbl_stat_tam, 1, 1)
-        stl.addWidget(QLabel("🧽 Lần rửa chuồng"), 2, 0)
+        stl.addWidget(QLabel("LẦN RỬA CHUỒNG"), 2, 0)
         self.lbl_stat_vs = QLabel("0")
-        self.lbl_stat_vs.setStyleSheet("font-weight:700;")
+        self.lbl_stat_vs.setStyleSheet('font-weight:700; font-family:"Consolas", monospace;')
         stl.addWidget(self.lbl_stat_vs, 2, 1)
         left.addWidget(gb_stat)
 
@@ -221,9 +225,9 @@ class HomeTab(QWidget):
         gb_act = QGroupBox("Cơ cấu chấp hành")
         act_lay = QGridLayout(gb_act)
         act_lay.setSpacing(12)
-        for i, (icon, name, pin) in enumerate(ACTUATOR_ROWS):
+        for i, (name, pin) in enumerate(ACTUATOR_ROWS):
             r, c = divmod(i, 4)
-            card, lbl = device_status_card(icon, name)
+            card, lbl = device_status_card(name)
             self.device_status_labels[pin] = lbl
             act_lay.addWidget(card, r, c)
         root.addWidget(gb_act)
@@ -247,6 +251,7 @@ class HomeTab(QWidget):
         water = data.get("water")
         mode = data.get("mode")
         devices = data.get("devices", {})
+        device_online = data.get("device_online")
 
         if temp is not None:
             self.lbl_temp.setText(str(temp))
@@ -276,9 +281,38 @@ class HomeTab(QWidget):
             except (ValueError, TypeError):
                 pass
 
-        self.dot_system.set_on(True)
-        self.lbl_state.setText("Bình thường")
-        self.lbl_state.setStyleSheet("color:#2fae4e; font-weight:700;")
+        # SUA: BUG THAT tung co san TRUOC KHI sua hom nay - code CU dat
+        # "Binh thuong" + lam moi _last_data_time VO DIEU KIEN moi lan ham
+        # nay duoc goi, KE CA khi raw du lieu poll ve HOAN TOAN RONG (vd PC
+        # mat mang toi Blynk Cloud, get_pins() tra ve {}) - khien co che
+        # "MAT KET NOI DU LIEU" (timeout 15s o _tick() ben duoi) THUC TE
+        # KHONG BAO GIO kich hoat duoc, vi _last_data_time luon duoc "lam
+        # moi gia tao" moi chu ky du poll THAT SU co thanh cong hay khong.
+        # Gio CHI coi la "co nhan duoc du lieu that" khi co it nhat 1 trong
+        # cac gia tri co ban (temp/humi/mode) khac None.
+        co_du_lieu_that = any(v is not None for v in (temp, humi, mode))
+        if not co_du_lieu_that:
+            self._cap_nhat_thong_ke(devices)
+            return  # KHONG cham _last_data_time - de _tick() tu phat hien mat ket noi that su
+
+        # SUA: THEM MOI - dung DUNG trang thai online/offline THAT SU cua
+        # ESP32 (tu Blynk isHardwareConnected API), thay vi CHI suy doan
+        # qua "co nhan duoc phan hoi khong". Ly do can lam rieng: doc pin
+        # (get_pins) van "thanh cong" BINH THUONG du ESP32 da offline tu
+        # lau, vi Blynk Cloud tra ve GIA TRI CACHE CUOI CUNG chu khong bao
+        # loi - _tick() (dua vao _last_data_time) KHONG the phat hien duoc
+        # truong hop nay, vi day la loi o PHIA ESP32 chu khong phai APP mat
+        # ket noi toi Blynk Cloud. device_online=None nghia la KHONG hoi
+        # duoc rieng cau nay (loi mang luc goi isHardwareConnected) - van
+        # coi la binh thuong vi it nhat pin van doc duoc.
+        if device_online is False:
+            self.dot_system.set_on(False)
+            self.lbl_state.setText("ESP32 ĐANG OFFLINE")
+            self.lbl_state.setStyleSheet("color:#d13c3c; font-weight:700;")
+        else:
+            self.dot_system.set_on(True)
+            self.lbl_state.setText("Bình thường")
+            self.lbl_state.setStyleSheet("color:#2fae4e; font-weight:700;")
         self._last_data_time = time.time()
 
         self._cap_nhat_thong_ke(devices)
@@ -317,5 +351,5 @@ class HomeTab(QWidget):
             return
         if time.time() - self._last_data_time > 15:
             self.dot_system.set_on(False)
-            self.lbl_state.setText("⚠️ Mất kết nối dữ liệu")
+            self.lbl_state.setText("MẤT KẾT NỐI DỮ LIỆU")
             self.lbl_state.setStyleSheet("color:#c0392b; font-weight:700;")
