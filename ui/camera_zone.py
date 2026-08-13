@@ -54,6 +54,15 @@ except Exception:  # pragma: no cover
 _BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ZONE_CONFIG_PATH = os.path.join(_BASE_DIR, "zone_config.json")  # zone MAC DINH (khi chua chon camera nao / demo)
 
+# SUA: THEM MOI - VUNG CHUONG (pen zone): vung gioi han VAT LY cua CHINH
+# chuong nay tren khung hinh, KHAC voi vung mang an (chi de biet con vat co
+# dang "an" hay khong). Vung chuong dung de LOC CUNG moi phat hien (bo qua
+# HOAN TOAN, khong ve/khong tinh) neu tam doi tuong nam NGOAI duong bien nay
+# - giai quyet dung van de "camera quay lan sang chuong ben canh, nhan dien
+# nham ca lon chuong khac". Luu RIENG theo tung camera (giong het co che
+# ZONE_CONFIG_PATH o tren) vi moi camera 1 goc quay/1 chuong khac nhau.
+PEN_ZONE_CONFIG_PATH = os.path.join(_BASE_DIR, "pen_zone_config.json")  # pen zone MAC DINH (demo/chua chon camera)
+
 # SUA: THEM MOI - ho tro NHIEU CAMERA (nhap URL tren giao dien, khong con
 # gan cung stream_url trong code nua). Luu danh sach {ten, url} + camera
 # dang chon + che do (camera/demo) ra 1 file JSON o goc du an.
@@ -67,6 +76,15 @@ BYTETRACK_CONFIG_PATH = os.path.join(_BASE_DIR, "bytetrack_custom.yaml")
 # Chu ky tu dong thu ket noi lai (giay) khi dang o che do "camera" ma bi mat
 # ket noi - khong thu lai lien tuc moi frame (66ms) de tranh spam ket noi.
 RECONNECT_INTERVAL_SEC = 5
+
+# SUA: THEM MOI - thoi gian toi da (giay) 1 khung hinh cache trong
+# _VideoStreamReader duoc coi la "con moi". Qua thoi gian nay ma luong doc
+# nen KHONG doc them duoc khung hinh THANH CONG nao -> coi la MAT KET NOI
+# THAT SU, du gia tri cache cu van con do. Can thiet vi nhieu camera IP
+# (RTSP/HTTP) khi mat mang khong luon bao loi ro rang cho OpenCV/FFmpeg -
+# co the "treo" ma khong nem loi, hoac cap.isOpened() van bao True dù
+# stream that su da chet.
+KHUNG_HINH_TOI_DA_CU_GIAY = 6
 
 
 def _sanitize_ten_camera(ten):
@@ -82,6 +100,14 @@ def _zone_config_path_cho_camera(ten_camera):
     if not ten_camera:
         return ZONE_CONFIG_PATH
     return os.path.join(_BASE_DIR, f"zone_config_{_sanitize_ten_camera(ten_camera)}.json")
+
+
+def _pen_zone_config_path_cho_camera(ten_camera):
+    """Giong het _zone_config_path_cho_camera() o tren nhung danh cho VUNG
+    CHUONG - file JSON RIENG, KHONG dung chung voi file vung mang an."""
+    if not ten_camera:
+        return PEN_ZONE_CONFIG_PATH
+    return os.path.join(_BASE_DIR, f"pen_zone_config_{_sanitize_ten_camera(ten_camera)}.json")
 
 from PyQt5.QtCore import Qt, QTimer, QPoint, pyqtSignal
 from PyQt5.QtGui import QImage, QPixmap, QPainter, QPen, QColor, QPolygon, QFont
@@ -267,6 +293,11 @@ class _VideoStreamReader:
         self.lock = threading.Lock()
         self.running = False
         self.thread = None
+        # SUA: BUG THAT tung gay "dung hinh vinh vien, khong tu ket noi lai
+        # duoc" - theo doi THEM moc thoi gian LAN DOC THANH CONG GAN NHAT,
+        # dung trong read() ben duoi de tu phat hien khung hinh da QUA CU
+        # (xem giai thich chi tiet trong read()).
+        self._lan_doc_thanh_cong_gan_nhat = time.time()
         if self.cap.isOpened():
             self.running = True
             self.thread = threading.Thread(target=self._update_loop, daemon=True)
@@ -282,15 +313,41 @@ class _VideoStreamReader:
                 with self.lock:
                     self.frame = frame
                     self.ret = True
+                    self._lan_doc_thanh_cong_gan_nhat = time.time()
             else:
                 # Doc loi (mat ket noi tam thoi) - nghi 100ms roi thu lai,
-                # tranh vong lap chiem 100% CPU khi mat ket noi keo dai
+                # tranh vong lap chiem 100% CPU khi mat ket noi keo dai.
+                # SUA: KHONG dat self.ret=False o day (van giu frame cu de
+                # hien thi tam trong luc mang giat nhe/mat 1-2 khung ngan
+                # han) - viec phat hien "mat ket noi THAT SU" duoc chuyen
+                # sang co che "khung hinh qua cu" trong read() ben duoi,
+                # dang tin cay hon vi CA truong hop cap.read() tra ve False
+                # LAN truong hop no "treo" ma khong bao loi ro rang deu
+                # duoc bat dung.
                 time.sleep(0.1)
 
     def read(self):
-        """Luon tra ve FRAME MOI NHAT hien co, khong bao gio xep hang doi."""
+        """Luon tra ve FRAME MOI NHAT hien co, khong bao gio xep hang doi.
+
+        SUA: BUG THAT tung gay "app dung hinh o khung cuoi cung khi mat
+        mang/mat dien camera, khong bao gio tu ket noi lai" - TRUOC DAY ham
+        nay CHI dua vao self.ret (dat True o LAN DOC THANH CONG CUOI CUNG,
+        khong bao gio duoc dat lai False khi doc that bai) -> read() LUON
+        tra ve (True, frame_cu) MAI MAI du mang da chet tu lau, khien logic
+        kiem tra mat ket noi/tu ket noi lai o _get_frame() (da viet dung,
+        co san) khong bao gio duoc kich hoat vi no dua vao read() tra ve
+        False de biet mat ket noi.
+
+        Gio KIEM TRA THEM do "cu" cua khung hinh: neu qua
+        KHUNG_HINH_TOI_DA_CU_GIAY giay ma KHONG doc them duoc khung hinh
+        THANH CONG nao, tra ve THAT BAI THAT SU (False, None) - kich hoat
+        dung logic tu ket noi lai, du gia tri self.frame/self.ret cache cu
+        van con do."""
         with self.lock:
             if self.frame is None:
+                return False, None
+            qua_cu = (time.time() - self._lan_doc_thanh_cong_gan_nhat) > KHUNG_HINH_TOI_DA_CU_GIAY
+            if qua_cu:
                 return False, None
             return self.ret, self.frame.copy()
 
@@ -320,6 +377,14 @@ class CameraZoneWidget(QWidget):
         self.zone_points = []          # các điểm đa giác (tọa độ theo ảnh gốc)
         self.zone_closed = False
         self.drawing_enabled = False
+
+        # SUA: THEM MOI - VUNG CHUONG (pen zone): gioi han vat ly cua chuong
+        # tren khung hinh, doc lap hoan toan voi zone_points/zone_closed o
+        # tren (do la vung MANG AN). Dung de LOC BO cac phat hien "lan"
+        # sang chuong ben canh do goc quay camera rong hon dien tich chuong.
+        self.pen_zone_points = []
+        self.pen_zone_closed = False
+        self.pen_drawing_enabled = False
 
         # ---- MOI: da camera (nhap URL tren giao dien, luu lai, chon/xoa duoc) ----
         self.cameras = []              # list[{"ten":.., "url":..}]
@@ -357,6 +422,7 @@ class CameraZoneWidget(QWidget):
         self._init_camera()
         self._init_model()
         self._load_zone_from_file()
+        self._load_pen_zone_from_file()
 
         self.timer = QTimer(self)
         self.timer.timeout.connect(self._update_frame)
@@ -436,6 +502,29 @@ class CameraZoneWidget(QWidget):
         # can, de khop chieu cao voi Danh sach ID lon dang an ben canh.
         gb.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
         bottom_controls_row.addWidget(gb, 1)
+
+        # ---- MOI: khoi VUNG CHUONG (loc bo phan camera quay lan sang chuong ben canh) ----
+        gb_pen = QGroupBox("Điều khiển vùng chuồng (giới hạn khu vực nhận diện)")
+        gb_pen_lay = QVBoxLayout(gb_pen)
+
+        self.btn_draw_pen = QPushButton("Bắt đầu vẽ vùng chuồng")
+        self.btn_draw_pen.setCheckable(True)
+        self.btn_draw_pen.clicked.connect(self._toggle_drawing_pen)
+        gb_pen_lay.addWidget(self.btn_draw_pen)
+
+        self.btn_clear_pen = QPushButton("Xóa vùng chuồng")
+        self.btn_clear_pen.clicked.connect(self._clear_pen_zone)
+        gb_pen_lay.addWidget(self.btn_clear_pen)
+
+        hint_pen = QLabel("Hướng dẫn: vẽ đường biên đúng diện tích chuồng này\n"
+                           "(click trái thêm điểm, double-click đóng vùng).\n"
+                           "Vật nuôi ở NGOÀI vùng này (vd chuồng bên cạnh lọt\n"
+                           "vào khung hình) sẽ KHÔNG được nhận diện.")
+        hint_pen.setWordWrap(True)
+        hint_pen.setStyleSheet("color:#555; font-size:14px;")
+        gb_pen_lay.addWidget(hint_pen)
+        gb_pen.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
+        bottom_controls_row.addWidget(gb_pen, 1)
 
         # ---- MOI: khoi HIEU CHINH MAU ----
         gb_cal = QGroupBox("HIỆU CHỈNH MÀU (TEST CAMERA THỰC TẾ)")
@@ -764,6 +853,10 @@ class CameraZoneWidget(QWidget):
         self.zone_closed = False
         self._load_zone_from_file()  # tu doc dung file zone_config_<ten_camera>.json
 
+        self.pen_zone_points = []
+        self.pen_zone_closed = False
+        self._load_pen_zone_from_file()  # tu doc dung file pen_zone_config_<ten_camera>.json
+
         if self.source_mode == "camera":
             self._try_connect_active_camera(force=True)
 
@@ -845,17 +938,41 @@ class CameraZoneWidget(QWidget):
     def _toggle_drawing(self, checked):
         self.drawing_enabled = checked
         if checked:
-            # Ve vung va hieu chinh mau la 2 viec khac nhau, khong lam cung
-            # luc de tranh nham lan click (VD dang do mau ma lo them diem zone)
+            # Ve vung, ve vung chuong va hieu chinh mau la 3 viec khac nhau,
+            # khong lam cung luc de tranh nham lan click (VD dang do mau ma
+            # lo them diem zone, hoac dang ve mang an ma lo them diem chuong).
             if self.calibrating:
                 self.calibrating = False
                 self.btn_calibrate.setChecked(False)
                 self.btn_calibrate.setText("Bật chế độ đo màu (click vào điểm đã tô)")
+            if self.pen_drawing_enabled:
+                self.pen_drawing_enabled = False
+                self.btn_draw_pen.setChecked(False)
+                self.btn_draw_pen.setText("Bắt đầu vẽ vùng chuồng")
             self.zone_points = []
             self.zone_closed = False
             self.btn_draw.setText("Đang vẽ... (double-click để đóng)")
         else:
             self.btn_draw.setText("Bắt đầu vẽ vùng máng ăn")
+
+    def _toggle_drawing_pen(self, checked):
+        """Giong het _toggle_drawing() o tren nhung danh cho VUNG CHUONG -
+        cung tat 2 che do con lai (ve mang an / hieu chinh mau) neu dang bat."""
+        self.pen_drawing_enabled = checked
+        if checked:
+            if self.calibrating:
+                self.calibrating = False
+                self.btn_calibrate.setChecked(False)
+                self.btn_calibrate.setText("Bật chế độ đo màu (click vào điểm đã tô)")
+            if self.drawing_enabled:
+                self.drawing_enabled = False
+                self.btn_draw.setChecked(False)
+                self.btn_draw.setText("Bắt đầu vẽ vùng máng ăn")
+            self.pen_zone_points = []
+            self.pen_zone_closed = False
+            self.btn_draw_pen.setText("Đang vẽ vùng chuồng... (double-click để đóng)")
+        else:
+            self.btn_draw_pen.setText("Bắt đầu vẽ vùng chuồng")
 
     def _clear_zone(self):
         self.zone_points = []
@@ -863,6 +980,13 @@ class CameraZoneWidget(QWidget):
         self.btn_draw.setChecked(False)
         self.btn_draw.setText("Bắt đầu vẽ vùng máng ăn")
         self._save_zone_to_file()  # luu lai trang thai "da xoa" -> lan sau mo app khong bi hien lai vung cu
+
+    def _clear_pen_zone(self):
+        self.pen_zone_points = []
+        self.pen_zone_closed = False
+        self.btn_draw_pen.setChecked(False)
+        self.btn_draw_pen.setText("Bắt đầu vẽ vùng chuồng")
+        self._save_pen_zone_to_file()
 
     # ------------------------------------------------------ bat/tat nhan dien
     def _toggle_detection(self, checked):
@@ -877,11 +1001,16 @@ class CameraZoneWidget(QWidget):
         self._last_calibration_hsv = None
         self.btn_save_new_id.setEnabled(False)
         if checked:
-            # Doi ngay voi che do ve vung, ly do giai thich o _toggle_drawing
+            # Doi ngay voi che do ve vung / ve vung chuong, ly do giai thich
+            # o _toggle_drawing / _toggle_drawing_pen
             if self.drawing_enabled:
                 self.drawing_enabled = False
                 self.btn_draw.setChecked(False)
                 self.btn_draw.setText("Bắt đầu vẽ vùng máng ăn")
+            if self.pen_drawing_enabled:
+                self.pen_drawing_enabled = False
+                self.btn_draw_pen.setChecked(False)
+                self.btn_draw_pen.setText("Bắt đầu vẽ vùng chuồng")
             self.btn_calibrate.setText("Đang đo màu... (click vào chấm đã tô trên video)")
         else:
             self.btn_calibrate.setText("Bật chế độ đo màu (click vào điểm đã tô)")
@@ -1098,6 +1227,37 @@ class CameraZoneWidget(QWidget):
         except Exception as e:
             print(f"[CameraZoneWidget] Khong the doc vung mang an da luu ({path}): {e}")
 
+    def _save_pen_zone_to_file(self):
+        """Giong het _save_zone_to_file() nhung danh cho VUNG CHUONG - ghi
+        ra file JSON RIENG (pen_zone_config_<camera>.json), KHONG dung chung
+        file voi vung mang an."""
+        path = _pen_zone_config_path_cho_camera(self.active_camera_name)
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump({"pen_zone_points": self.pen_zone_points, "pen_zone_closed": self.pen_zone_closed}, f)
+        except Exception as e:
+            print(f"[CameraZoneWidget] Khong the luu vung chuong ({path}): {e}")
+
+    def _load_pen_zone_from_file(self):
+        """Giong het _load_zone_from_file() nhung danh cho VUNG CHUONG."""
+        path = _pen_zone_config_path_cho_camera(self.active_camera_name)
+        if not os.path.exists(path):
+            self.btn_draw_pen.setText("Bắt đầu vẽ vùng chuồng")
+            return
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            points = data.get("pen_zone_points", [])
+            closed = data.get("pen_zone_closed", False)
+            self.pen_zone_points = [tuple(p) for p in points]
+            self.pen_zone_closed = bool(closed) and len(self.pen_zone_points) >= 3
+            if self.pen_zone_closed:
+                self.btn_draw_pen.setText("Bắt đầu vẽ vùng chuồng (đã có vùng đã lưu)")
+            else:
+                self.btn_draw_pen.setText("Bắt đầu vẽ vùng chuồng")
+        except Exception as e:
+            print(f"[CameraZoneWidget] Khong the doc vung chuong da luu ({path}): {e}")
+
     def _on_mouse_press(self, event):
         # MOI: uu tien che do hieu chinh mau neu dang bat, khong lien quan
         # gi toi viec ve vung (2 che do da duoc dam bao khong bao gio cung
@@ -1116,6 +1276,17 @@ class CameraZoneWidget(QWidget):
                 self.lbl_calibration_result.setText("Không đọc được màu tại điểm này (thử click lại).")
             return
 
+        # SUA: THEM MOI - nhanh ve VUNG CHUONG, kiem tra TRUOC nhanh ve vung
+        # mang an ben duoi vi 2 che do khong bao gio cung bat 1 luc (da dam
+        # bao o _toggle_drawing / _toggle_drawing_pen), nen thu tu kiem tra
+        # truoc/sau khong anh huong hanh vi, chi can dung 1 trong 2.
+        if self.pen_drawing_enabled and not self.pen_zone_closed:
+            if event.button() == Qt.LeftButton:
+                self.pen_zone_points.append((event.pos().x(), event.pos().y()))
+            elif event.button() == Qt.RightButton:
+                self._close_pen_zone()
+            return
+
         if not self.drawing_enabled or self.zone_closed:
             return
         if event.button() == Qt.LeftButton:
@@ -1124,6 +1295,9 @@ class CameraZoneWidget(QWidget):
             self._close_zone()
 
     def _on_mouse_double_click(self, event):
+        if self.pen_drawing_enabled and not self.pen_zone_closed:
+            self._close_pen_zone()
+            return
         if self.drawing_enabled and not self.zone_closed:
             self._close_zone()
 
@@ -1134,6 +1308,18 @@ class CameraZoneWidget(QWidget):
             self.btn_draw.setChecked(False)
             self.btn_draw.setText("Bắt đầu vẽ vùng máng ăn")
             self._save_zone_to_file()  # luu ngay khi vung duoc dong thanh cong
+        else:
+            QMessageBox.information(self, "Vùng chưa hợp lệ",
+                                     "Cần ít nhất 3 điểm để tạo thành 1 vùng kín.")
+
+    def _close_pen_zone(self):
+        """Giong het _close_zone() nhung danh cho VUNG CHUONG."""
+        if len(self.pen_zone_points) >= 3:
+            self.pen_zone_closed = True
+            self.pen_drawing_enabled = False
+            self.btn_draw_pen.setChecked(False)
+            self.btn_draw_pen.setText("Bắt đầu vẽ vùng chuồng")
+            self._save_pen_zone_to_file()
         else:
             QMessageBox.information(self, "Vùng chưa hợp lệ",
                                      "Cần ít nhất 3 điểm để tạo thành 1 vùng kín.")
@@ -1349,6 +1535,10 @@ class CameraZoneWidget(QWidget):
         found_ids = []
         positions_dict = {}  # SUA: THEM MOI - {real_id: (x_norm, y_norm)} cho tab CHART
         zone_np = np.array(self.zone_points, dtype=np.int32) if self.zone_points else None
+        # SUA: THEM MOI - vung CHUONG (khac han zone_np la vung MANG AN o
+        # tren), dung de LOC CUNG cac phat hien nam ngoai ranh gioi chuong -
+        # xem giai thich chi tiet o vong lap ben duoi (cho `continue`).
+        pen_zone_np = np.array(self.pen_zone_points, dtype=np.int32) if self.pen_zone_points else None
         now = time.time()
 
         # persist=True: giu bo nho tracking cua ByteTrack giua cac lan goi
@@ -1394,6 +1584,18 @@ class CameraZoneWidget(QWidget):
                 cy = int(M["m01"] / M["m00"]) if M["m00"] != 0 else y + h // 2
             else:
                 cx, cy = x + w // 2, y + h // 2
+
+            # SUA: THEM MOI - LOC theo VUNG CHUONG: neu nguoi dung DA ve va
+            # dong vung nay, BO QUA HOAN TOAN (khong ve, khong doi chieu mau,
+            # khong tinh vi tri, khong tinh vao "dang an") bat ky phat hien
+            # nao co tam (cx,cy) nam NGOAI duong bien - day chinh la co che
+            # xu ly truong hop camera quay LAN SANG CHUONG BEN CANH. Neu
+            # chua ve vung chuong (pen_zone_closed=False) thi KHONG loc gi
+            # ca, giu nguyen hanh vi cu (tuong thich nguoc voi camera da cau
+            # hinh tu truoc, chua kip ve them vung chuong).
+            if self.pen_zone_closed and pen_zone_np is not None and len(pen_zone_np) >= 3:
+                if cv2.pointPolygonTest(pen_zone_np, (cx, cy), False) < 0:
+                    continue
 
             sampled_id, _color_counts = self._detect_dominant_marker_color(frame_bgr, x, y, w, h, poly=poly)
 
@@ -1461,6 +1663,9 @@ class CameraZoneWidget(QWidget):
         hsv = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2HSV)
         found_ids = []
         zone_np = np.array(self.zone_points, dtype=np.int32) if self.zone_points else None
+        # SUA: THEM MOI - vung CHUONG, dung y het logic da giai thich trong
+        # _detect_by_yolo_track_color() o tren.
+        pen_zone_np = np.array(self.pen_zone_points, dtype=np.int32) if self.pen_zone_points else None
 
         for pig_id, cfg in PIG_COLOR_IDS.items():
             s_lo, s_hi = cfg["s_range"]
@@ -1483,6 +1688,12 @@ class CameraZoneWidget(QWidget):
                 cx = int(M["m10"] / M["m00"])
                 cy = int(M["m01"] / M["m00"])
 
+                # SUA: THEM MOI - loc theo vung CHUONG truoc, giong het
+                # nhanh YOLO o tren (bo qua hoan toan neu nam ngoai chuong).
+                if self.pen_zone_closed and pen_zone_np is not None and len(pen_zone_np) >= 3:
+                    if cv2.pointPolygonTest(pen_zone_np, (cx, cy), False) < 0:
+                        continue
+
                 inside = False
                 if self.zone_closed and zone_np is not None and len(zone_np) >= 3:
                     inside = cv2.pointPolygonTest(zone_np, (cx, cy), False) >= 0
@@ -1502,6 +1713,17 @@ class CameraZoneWidget(QWidget):
     def _draw_zone_overlay(self, frame_bgr):
         if cv2 is None:
             return frame_bgr
+
+        # SUA: THEM MOI - ve VUNG CHUONG (mau TIM, chi ve duong vien, KHONG
+        # to nen mo - de phan biet ro voi vung mang an mau CAM co to nen ben
+        # duoi). Ve TRUOC vung mang an de neu 2 duong bien co giao nhau,
+        # duong mang an (quan trong hon cho tinh trang "dang an") van noi len tren.
+        if len(self.pen_zone_points) >= 2:
+            pts_pen = np.array(self.pen_zone_points, dtype=np.int32)
+            cv2.polylines(frame_bgr, [pts_pen], self.pen_zone_closed, (200, 0, 200), 2)
+        for p in self.pen_zone_points:
+            cv2.circle(frame_bgr, p, 4, (200, 0, 200), -1)
+
         if len(self.zone_points) >= 2:
             pts = np.array(self.zone_points, dtype=np.int32)
             if self.zone_closed:
