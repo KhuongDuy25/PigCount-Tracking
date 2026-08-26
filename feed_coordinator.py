@@ -54,14 +54,14 @@ class FeedCoordinator:
     def _trigger_feed_now(self, source_label, on_status):
         got_lock = self._lock.acquire(blocking=False)
         if not got_lock:
-            msg = f"⛔ [{source_label}] Đang có 1 lệnh cho ăn khác (lịch tự động) chạy dở — bỏ qua để tránh chồng lệnh."
+            msg = f"[{source_label}] Đang có 1 lệnh cho ăn khác (lịch tự động) chạy dở — bỏ qua để tránh chồng lệnh."
             if on_status:
                 on_status(False, msg)
             return
         try:
             ok_v6 = self.blynk.set_pin("V6", 1)
-            msg = (f"✅ [{source_label}] Đã bấm cho ăn (dùng khối lượng đang cấu hình sẵn trên ESP32)."
-                   if ok_v6 else f"❌ [{source_label}] Gửi lệnh cho ăn thất bại.")
+            msg = (f"[{source_label}] Đã bấm cho ăn (dùng khối lượng đang cấu hình sẵn trên ESP32)."
+                   if ok_v6 else f"[{source_label}] Gửi lệnh cho ăn thất bại.")
             if on_status:
                 on_status(ok_v6, msg)
         finally:
@@ -72,7 +72,7 @@ class FeedCoordinator:
         # chối thẳng thay vì âm thầm xếp hàng/ghi đè lên lệnh đang chạy.
         got_lock = self._lock.acquire(blocking=False)
         if not got_lock:
-            msg = f"⛔ [{source_label}] Đang có 1 lệnh cho ăn khác chạy dở — bỏ qua để tránh chồng lệnh/xả nhầm khối lượng."
+            msg = f"[{source_label}] Đang có 1 lệnh cho ăn khác chạy dở — bỏ qua để tránh chồng lệnh/xả nhầm khối lượng."
             if on_status:
                 on_status(False, msg)
             return
@@ -80,7 +80,7 @@ class FeedCoordinator:
         try:
             ok_v4 = self.blynk.set_pin("V4", gram)
             if not ok_v4:
-                msg = f"❌ [{source_label}] Gửi khối lượng ({gram}g) thất bại — đã HỦY lệnh cho ăn."
+                msg = f"[{source_label}] Gửi khối lượng ({gram}g) thất bại — đã HỦY lệnh cho ăn."
                 if on_status:
                     on_status(False, msg)
                 return
@@ -98,7 +98,7 @@ class FeedCoordinator:
                     pass
 
             if not confirmed:
-                msg = (f"❌ [{source_label}] Không xác nhận được khối lượng ({gram}g) đã ghi "
+                msg = (f"[{source_label}] Không xác nhận được khối lượng ({gram}g) đã ghi "
                        f"đúng trên Blynk Cloud sau {self.confirm_retries} lần thử — đã HỦY lệnh "
                        f"cho ăn để tránh xả nhầm khối lượng của lần trước.")
                 if on_status:
@@ -107,9 +107,9 @@ class FeedCoordinator:
 
             ok_v6 = self.blynk.set_pin("V6", 1)
             if ok_v6:
-                msg = f"✅ [{source_label}] Đã xác nhận {gram}g và bấm cho ăn thành công."
+                msg = f"[{source_label}] Đã xác nhận {gram}g và bấm cho ăn thành công."
             else:
-                msg = f"❌ [{source_label}] Đã ghi đúng {gram}g nhưng gửi lệnh xả (V6) thất bại."
+                msg = f"[{source_label}] Đã ghi đúng {gram}g nhưng gửi lệnh xả (V6) thất bại."
             if on_status:
                 on_status(ok_v6, msg)
         finally:

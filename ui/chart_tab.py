@@ -49,6 +49,8 @@ from matplotlib.path import Path as MplPath
 import matplotlib.dates as mdates
 import numpy as np
 
+from ui.thin_status_bar import ThinStatusBar
+
 # so mau gan nhat giu lai de ve bieu do nhiet do/do am. SUA: TANG len rat
 # nhieu so voi ban cu (60) vi gio con phai chua ca 1 ngay du lieu LICH SU
 # (granularity MINUTE ~ toi da 1440 diem/ngay) CONG THEM du lieu realtime
@@ -307,11 +309,26 @@ class ChartTab(QWidget):
 
     # ================================================================== UI
     def _build_ui(self):
-        root = QVBoxLayout(self)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
 
-        # -------- hang tren cung: chon ngay xem du lieu (dung chung cho ca
-        # Heatmap lan Duong di, vi ca 2 deu doc tu CUNG 1 file CSV/ngay) --------
+        # SUA: THEM MOI - thanh trang thai mong, lap lai o MOI tab.
+        self.thin_status = ThinStatusBar()
+        outer.addWidget(self.thin_status)
+
+        root = QVBoxLayout()
+        root.setContentsMargins(16, 12, 16, 16)
+        outer.addLayout(root)
+
+        # SUA: THEM MOI - boc ca hang chon ngay/camera vao 1 QGroupBox
+        # rieng (giong moi panel khac trong app) - truoc day hang nay noi
+        # THA NOI truc tiep tren nen tab, khong co vien bao quanh, khac
+        # phong cach voi phan con lai (da bi ghi nhan khi ra soat giao dien).
+        gb_filter = QGroupBox("Bộ lọc dữ liệu vị trí")
+        filter_lay = QVBoxLayout(gb_filter)
         hang_ngay = QHBoxLayout()
+        filter_lay.addLayout(hang_ngay)
         hang_ngay.addWidget(QLabel("XEM DỮ LIỆU VỊ TRÍ NGÀY:"))
         self.date_picker = QDateEdit()
         self.date_picker.setCalendarPopup(True)
@@ -332,12 +349,14 @@ class ChartTab(QWidget):
 
         hang_ngay.addStretch(1)
         self.btn_xoa_lich_su = QPushButton("XÓA DỮ LIỆU NGÀY NÀY")
+        # SUA: THEM MOI - dung role="btnOutline" chuan (hanh dong PHU).
+        self.btn_xoa_lich_su.setProperty("role", "btnOutline")
         self.btn_xoa_lich_su.clicked.connect(self._xoa_lich_su)
         hang_ngay.addWidget(self.btn_xoa_lich_su)
         self.lbl_so_dong = QLabel("")
         self.lbl_so_dong.setStyleSheet("color:#888; font-size:11px;")
         hang_ngay.addWidget(self.lbl_so_dong)
-        root.addLayout(hang_ngay)
+        root.addWidget(gb_filter)
 
         # -------- hang giua: Heatmap (trai) + Duong di/Trajectory (phai) --------
         hang_ban_do = QHBoxLayout()
@@ -376,6 +395,10 @@ class ChartTab(QWidget):
         chu_thich_lay.addWidget(lbl_do)
         chu_thich_lay.addWidget(lbl_xanh)
         chu_thich_lay.addStretch(1)
+        # SUA: THEM MOI - luu tham chieu de co the AN khung nay khi chua co
+        # du lieu (xem _ve_heatmap()) - tranh 4 khung trang cung luc (da bi
+        # ghi nhan khi ra soat giao dien: "trống và thiếu chuyên nghiệp").
+        self.gb_chu_thich_heat = gb_chu_thich_heat
         khu_giua_heat.addWidget(gb_chu_thich_heat, 1)
 
         hl.addLayout(khu_giua_heat)
@@ -410,6 +433,9 @@ class ChartTab(QWidget):
         info_lay.addWidget(self.lbl_info_luot)
         info_lay.addWidget(self.lbl_info_thoigian)
         info_lay.addStretch(1)
+        # SUA: THEM MOI - luu tham chieu de co the AN khung nay khi chua co
+        # du lieu (xem _ve_trajectory()).
+        self.gb_info = gb_info
         khu_giua.addWidget(gb_info, 1)
 
         tl.addLayout(khu_giua)
@@ -701,9 +727,15 @@ class ChartTab(QWidget):
             self.ax_heat.imshow(h_min.T, origin="upper", extent=[0, 1, 1, 0],
                                  cmap="jet", aspect="auto", alpha=0.9, zorder=1,
                                  interpolation="bilinear")
+            # SUA: THEM MOI - CO du lieu -> hien lai khung CHU THICH.
+            self.gb_chu_thich_heat.setVisible(True)
         else:
             self.ax_heat.text(0.5, 0.5, "Chưa có dữ liệu vị trí ngày này",
                                ha="center", va="center", color="#999")
+            # SUA: THEM MOI - CHUA co du lieu -> AN khung CHU THICH (khong
+            # can giai thich mau sac cho 1 khung ve dang trong) - tranh
+            # canh nhau 2 khung trang cung luc, nhin gon hon.
+            self.gb_chu_thich_heat.setVisible(False)
 
         self._trang_tri_truc(self.ax_heat)
         self.figure_heat.tight_layout()
@@ -933,6 +965,10 @@ class ChartTab(QWidget):
         gom ca phan lich su vua nap o load_history_from_blynk) - khong gan
         lai "moc thoi gian 0" theo mau dau tien nhu ban cu nua, vi bieu do
         gio hien thi CA NGAY chu khong chi vai chuc mau gan nhat."""
+        # SUA: THEM MOI - cap nhat thanh trang thai mong, dong bo voi moi
+        # tab khac.
+        self.thin_status.update_from_blynk(data)
+
         now = time.time()
         temp = data.get("temp")
         humi = data.get("humi")

@@ -5,7 +5,7 @@ alarm_tab.py — Tab ALARM (lưu lịch sử ra file + nút "Đã sửa")
 - record_event(): thêm 1 cảnh báo mới (từ V18 hoặc từ scheduler), LƯU NGAY
   ra file JSON để không mất khi tắt/mở lại app (trước đây chỉ lưu trong
   RAM của QTableWidget, tắt app là mất trắng).
-- Mỗi dòng có nút "✓ Đã sửa" — bấm vào là XÓA HẲN dòng đó khỏi danh sách
+- Mỗi dòng có nút "ĐÃ SỬA" — bấm vào là XÓA HẲN dòng đó khỏi danh sách
   (và khỏi file lưu), coi như lỗi đã được xử lý xong, không cần giữ lại.
 - Không có ACK/mức độ nghiêm trọng/âm thanh — giữ đơn giản theo đúng yêu cầu.
 """
@@ -18,6 +18,7 @@ from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QTableWidget,
     QTableWidgetItem, QPushButton, QHeaderView
 )
+from ui.thin_status_bar import ThinStatusBar
 
 MAX_ROWS = 200  # gioi han so dong luu, tranh file phinh to vo han sau nhieu ngay chay
 
@@ -32,11 +33,29 @@ class AlarmTab(QWidget):
         self._build_ui()
         self._load_from_file()  # doc lai lich su da luu tu lan truoc (neu co)
 
+    def update_from_blynk(self, data: dict):
+        """SUA: THEM MOI - chi de cap nhat thanh trang thai mong, dong bo
+        voi moi tab khac (xem ui/thin_status_bar.py)."""
+        self.thin_status.update_from_blynk(data)
+
     def _build_ui(self):
         root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+
+        # SUA: THEM MOI - thanh trang thai mong, lap lai o MOI tab.
+        self.thin_status = ThinStatusBar()
+        root.addWidget(self.thin_status)
+
+        content = QVBoxLayout()
+        content.setContentsMargins(16, 12, 16, 16)
+        root.addLayout(content)
 
         header = QHBoxLayout()
-        header.addWidget(QLabel("CẢNH BÁO HIỆN TẠI"))
+        # SUA: THEM MOI - dung role="pageTitle" chuan cho "Tieu de chinh".
+        title = QLabel("CẢNH BÁO HIỆN TẠI")
+        title.setObjectName("pageTitle")
+        header.addWidget(title)
         header.addStretch(1)
 
         note = QLabel("Tự động cập nhật từ ESP32 (qua V18) — lịch sử được lưu, không mất khi tắt app")
@@ -44,9 +63,11 @@ class AlarmTab(QWidget):
         header.addWidget(note)
 
         self.btn_clear = QPushButton("Xóa tất cả")
+        # SUA: THEM MOI - dung role="btnOutline" chuan (hanh dong PHU).
+        self.btn_clear.setProperty("role", "btnOutline")
         self.btn_clear.clicked.connect(self._clear_all)
         header.addWidget(self.btn_clear)
-        root.addLayout(header)
+        content.addLayout(header)
 
         self.table = QTableWidget(0, 4)
         self.table.setHorizontalHeaderLabels(["Thời gian", "Nội dung cảnh báo", "Trạng thái", ""])
@@ -54,7 +75,7 @@ class AlarmTab(QWidget):
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
         self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
         self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
-        root.addWidget(self.table)
+        content.addWidget(self.table)
 
     # ------------------------------------------------------------ ghi nhận
     def record_event(self, noi_dung, trang_thai="Mới"):
@@ -90,7 +111,7 @@ class AlarmTab(QWidget):
             self.table.setItem(row, 1, QTableWidgetItem(entry["noi_dung"]))
             self.table.setItem(row, 2, QTableWidgetItem(entry["trang_thai"]))
 
-            btn_fixed = QPushButton("✓ Đã sửa")
+            btn_fixed = QPushButton("ĐÃ SỬA")
             btn_fixed.setStyleSheet(
                 "background:#2fae4e; color:white; border-radius:4px; padding:3px 8px;"
             )

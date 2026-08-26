@@ -481,50 +481,68 @@ class CameraZoneWidget(QWidget):
         bottom_controls_row = QHBoxLayout()
         side.addLayout(bottom_controls_row)
 
-        gb = QGroupBox("Điều khiển vùng máng ăn (Zone)")
-        gb_lay = QVBoxLayout(gb)
+        # SUA: GOP LAI - truoc day "Vung mang an" va "Vung chuong" la 2
+        # QGroupBox rieng dat canh nhau trong bottom_controls_row (3 khoi:
+        # mang an + chuong + danh sach ID) khien tieu de cac khoi bi CHAT,
+        # tu chu bi cat mat ("...giới hạn khu vực nhận diệ", "...trong
+        # vùng..."). Gio GOP CHUNG vao 1 QGroupBox "Vùng giám sát (Zone)"
+        # duy nhat, chia 2 COT CON ben trong (QHBoxLayout long QVBoxLayout)
+        # - vua giam con 2 khoi trong bottom_controls_row (mang an+chuong
+        # GOP + danh sach ID), vua rut gon duoc phan huong dan (chi con 1
+        # dong/khoi thay vi 2-4 dong) nen tong the gon va du cho hien du chu hon han.
+        gb_zones = QGroupBox("Vùng giám sát (Zone)")
+        gb_zones_lay = QHBoxLayout(gb_zones)
 
-        self.btn_draw = QPushButton("Bắt đầu vẽ vùng máng ăn")
+        # ---- cot con: vung mang an ----
+        col_feed = QVBoxLayout()
+        lbl_feed = QLabel("Vùng máng ăn")
+        lbl_feed.setStyleSheet("font-weight:700; color:#c96a00;")
+        col_feed.addWidget(lbl_feed)
+
+        self.btn_draw = QPushButton("Vẽ vùng máng ăn")
         self.btn_draw.setCheckable(True)
         self.btn_draw.clicked.connect(self._toggle_drawing)
-        gb_lay.addWidget(self.btn_draw)
+        col_feed.addWidget(self.btn_draw)
 
-        self.btn_clear = QPushButton("Xóa vùng đã vẽ")
+        self.btn_clear = QPushButton("Xóa vùng")
         self.btn_clear.clicked.connect(self._clear_zone)
-        gb_lay.addWidget(self.btn_clear)
+        col_feed.addWidget(self.btn_clear)
 
-        hint = QLabel("Hướng dẫn: bấm 'Bắt đầu vẽ vùng', click trái để thêm\n"
-                      "điểm quanh máng ăn, double-click để đóng vùng.")
+        hint = QLabel("Click trái thêm điểm quanh máng ăn,\ndouble-click để đóng vùng.")
         hint.setWordWrap(True)
-        hint.setStyleSheet("color:#555; font-size:14px;")
-        gb_lay.addWidget(hint)
-        # Maximum: khong cho khoi nay bi keo gian cao hon noi dung that su
-        # can, de khop chieu cao voi Danh sach ID lon dang an ben canh.
-        gb.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
-        bottom_controls_row.addWidget(gb, 1)
+        hint.setStyleSheet("color:#555; font-size:12px;")
+        col_feed.addWidget(hint)
+        gb_zones_lay.addLayout(col_feed)
 
-        # ---- MOI: khoi VUNG CHUONG (loc bo phan camera quay lan sang chuong ben canh) ----
-        gb_pen = QGroupBox("Điều khiển vùng chuồng (giới hạn khu vực nhận diện)")
-        gb_pen_lay = QVBoxLayout(gb_pen)
+        # ---- duong ke phan cach 2 cot cho de phan biet truc quan ----
+        divider = QLabel()
+        divider.setFixedWidth(1)
+        divider.setStyleSheet("background:#c9c9c9;")
+        gb_zones_lay.addWidget(divider)
 
-        self.btn_draw_pen = QPushButton("Bắt đầu vẽ vùng chuồng")
+        # ---- cot con: vung chuong ----
+        col_pen = QVBoxLayout()
+        lbl_pen = QLabel("Vùng chuồng")
+        lbl_pen.setStyleSheet("font-weight:700; color:#8a00a3;")
+        col_pen.addWidget(lbl_pen)
+
+        self.btn_draw_pen = QPushButton("Vẽ vùng chuồng")
         self.btn_draw_pen.setCheckable(True)
         self.btn_draw_pen.clicked.connect(self._toggle_drawing_pen)
-        gb_pen_lay.addWidget(self.btn_draw_pen)
+        col_pen.addWidget(self.btn_draw_pen)
 
-        self.btn_clear_pen = QPushButton("Xóa vùng chuồng")
+        self.btn_clear_pen = QPushButton("Xóa vùng")
         self.btn_clear_pen.clicked.connect(self._clear_pen_zone)
-        gb_pen_lay.addWidget(self.btn_clear_pen)
+        col_pen.addWidget(self.btn_clear_pen)
 
-        hint_pen = QLabel("Hướng dẫn: vẽ đường biên đúng diện tích chuồng này\n"
-                           "(click trái thêm điểm, double-click đóng vùng).\n"
-                           "Vật nuôi ở NGOÀI vùng này (vd chuồng bên cạnh lọt\n"
-                           "vào khung hình) sẽ KHÔNG được nhận diện.")
+        hint_pen = QLabel("Vẽ đúng biên chuồng - vật nuôi ở\nNGOÀI vùng này sẽ KHÔNG được nhận diện.")
         hint_pen.setWordWrap(True)
-        hint_pen.setStyleSheet("color:#555; font-size:14px;")
-        gb_pen_lay.addWidget(hint_pen)
-        gb_pen.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
-        bottom_controls_row.addWidget(gb_pen, 1)
+        hint_pen.setStyleSheet("color:#555; font-size:12px;")
+        col_pen.addWidget(hint_pen)
+        gb_zones_lay.addLayout(col_pen)
+
+        gb_zones.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
+        bottom_controls_row.addWidget(gb_zones, 2)
 
         # ---- MOI: khoi HIEU CHINH MAU ----
         gb_cal = QGroupBox("HIỆU CHỈNH MÀU (TEST CAMERA THỰC TẾ)")
@@ -573,7 +591,10 @@ class CameraZoneWidget(QWidget):
 
         top_controls_row.addWidget(gb_cal, 2)
 
-        gb2 = QGroupBox("Danh sách ID lợn đang ăn (trong vùng)")
+        # SUA: THEM MOI - rut gon tieu de (truoc day "Danh sách ID lợn đang
+        # ăn (trong vùng)" qua dai, bi CAT CHU trong khung hep - da bi ghi
+        # nhan khi ra soat giao dien). Van du y nghia, ngan hon nhieu.
+        gb2 = QGroupBox("ID lợn đang ăn")
         gb2_lay = QVBoxLayout(gb2)
         self.list_ids = QListWidget()
         self.list_ids.setMaximumHeight(140)
@@ -906,10 +927,15 @@ class CameraZoneWidget(QWidget):
             self.lbl_model_status.style().polish(self.lbl_model_status)
             return
         if not os.path.exists(YOLO_MODEL_PATH):
+            # SUA: THEM MOI - AN duong dan file tuyet doi tren UI (thong
+            # tin debug khong can thiet voi nguoi dung cuoi, "ro ri" chi
+            # tiet ky thuat da bi ghi nhan khi ra soat giao dien) - CHI in
+            # ra console (Serial/terminal) cho lap trinh vien, con UI chi
+            # hien 1 cau ngan gon, de hieu.
+            print(f"[Camera] Không tìm thấy model AI tại: {YOLO_MODEL_PATH}")
             self.lbl_model_status.setProperty("role", "status-warning")
             self.lbl_model_status.setText(
-                f"Không tìm thấy model tại: {YOLO_MODEL_PATH}\n"
-                "-> đang dùng chế độ dò màu thuần túy."
+                "Chưa có model AI - đang dùng chế độ dò màu thuần túy."
             )
             self.lbl_model_status.style().unpolish(self.lbl_model_status)
             self.lbl_model_status.style().polish(self.lbl_model_status)
@@ -918,19 +944,21 @@ class CameraZoneWidget(QWidget):
             self.model = YOLO(YOLO_MODEL_PATH)
             self.model_ready = True
             class_list = ", ".join(f"{i}:{n}" for i, n in self.model.names.items())
+            # SUA: THEM MOI - duong dan file + danh sach class (thong tin
+            # ky thuat) chi in ra console, KHONG hien tren UI nua.
+            print(f"[Camera] Model đã nạp: {YOLO_MODEL_PATH} | Class: {class_list}")
             self.lbl_model_status.setProperty("role", "status-ok")
             self.lbl_model_status.setText(
-                f"Model đã sẵn sàng: {YOLO_MODEL_PATH}\n"
-                f"Class: {class_list}\n"
-                f"Đang chỉ nhận diện: {', '.join(TARGET_CLASS_NAMES)}"
+                f"Model AI đã sẵn sàng - đang nhận diện: {', '.join(TARGET_CLASS_NAMES)}"
             )
             self.lbl_model_status.style().unpolish(self.lbl_model_status)
             self.lbl_model_status.style().polish(self.lbl_model_status)
         except Exception as e:
             self.model = None
             self.model_ready = False
+            print(f"[Camera] Lỗi nạp model tại {YOLO_MODEL_PATH}: {e}")
             self.lbl_model_status.setProperty("role", "status-error")
-            self.lbl_model_status.setText(f"Lỗi nạp model: {e}")
+            self.lbl_model_status.setText("Lỗi nạp model AI - xem console để biết chi tiết.")
             self.lbl_model_status.style().unpolish(self.lbl_model_status)
             self.lbl_model_status.style().polish(self.lbl_model_status)
 
@@ -948,12 +976,12 @@ class CameraZoneWidget(QWidget):
             if self.pen_drawing_enabled:
                 self.pen_drawing_enabled = False
                 self.btn_draw_pen.setChecked(False)
-                self.btn_draw_pen.setText("Bắt đầu vẽ vùng chuồng")
+                self.btn_draw_pen.setText("Vẽ vùng chuồng")
             self.zone_points = []
             self.zone_closed = False
             self.btn_draw.setText("Đang vẽ... (double-click để đóng)")
         else:
-            self.btn_draw.setText("Bắt đầu vẽ vùng máng ăn")
+            self.btn_draw.setText("Vẽ vùng máng ăn")
 
     def _toggle_drawing_pen(self, checked):
         """Giong het _toggle_drawing() o tren nhung danh cho VUNG CHUONG -
@@ -967,25 +995,25 @@ class CameraZoneWidget(QWidget):
             if self.drawing_enabled:
                 self.drawing_enabled = False
                 self.btn_draw.setChecked(False)
-                self.btn_draw.setText("Bắt đầu vẽ vùng máng ăn")
+                self.btn_draw.setText("Vẽ vùng máng ăn")
             self.pen_zone_points = []
             self.pen_zone_closed = False
             self.btn_draw_pen.setText("Đang vẽ vùng chuồng... (double-click để đóng)")
         else:
-            self.btn_draw_pen.setText("Bắt đầu vẽ vùng chuồng")
+            self.btn_draw_pen.setText("Vẽ vùng chuồng")
 
     def _clear_zone(self):
         self.zone_points = []
         self.zone_closed = False
         self.btn_draw.setChecked(False)
-        self.btn_draw.setText("Bắt đầu vẽ vùng máng ăn")
+        self.btn_draw.setText("Vẽ vùng máng ăn")
         self._save_zone_to_file()  # luu lai trang thai "da xoa" -> lan sau mo app khong bi hien lai vung cu
 
     def _clear_pen_zone(self):
         self.pen_zone_points = []
         self.pen_zone_closed = False
         self.btn_draw_pen.setChecked(False)
-        self.btn_draw_pen.setText("Bắt đầu vẽ vùng chuồng")
+        self.btn_draw_pen.setText("Vẽ vùng chuồng")
         self._save_pen_zone_to_file()
 
     # ------------------------------------------------------ bat/tat nhan dien
@@ -1006,11 +1034,11 @@ class CameraZoneWidget(QWidget):
             if self.drawing_enabled:
                 self.drawing_enabled = False
                 self.btn_draw.setChecked(False)
-                self.btn_draw.setText("Bắt đầu vẽ vùng máng ăn")
+                self.btn_draw.setText("Vẽ vùng máng ăn")
             if self.pen_drawing_enabled:
                 self.pen_drawing_enabled = False
                 self.btn_draw_pen.setChecked(False)
-                self.btn_draw_pen.setText("Bắt đầu vẽ vùng chuồng")
+                self.btn_draw_pen.setText("Vẽ vùng chuồng")
             self.btn_calibrate.setText("Đang đo màu... (click vào chấm đã tô trên video)")
         else:
             self.btn_calibrate.setText("Bật chế độ đo màu (click vào điểm đã tô)")
@@ -1210,7 +1238,7 @@ class CameraZoneWidget(QWidget):
         (neu co) - goi moi khi widget khoi dong HOAC moi khi chuyen camera."""
         path = _zone_config_path_cho_camera(self.active_camera_name)
         if not os.path.exists(path):
-            self.btn_draw.setText("Bắt đầu vẽ vùng máng ăn")
+            self.btn_draw.setText("Vẽ vùng máng ăn")
             return
         try:
             with open(path, "r", encoding="utf-8") as f:
@@ -1221,9 +1249,9 @@ class CameraZoneWidget(QWidget):
             self.zone_points = [tuple(p) for p in points]
             self.zone_closed = bool(closed) and len(self.zone_points) >= 3
             if self.zone_closed:
-                self.btn_draw.setText("Bắt đầu vẽ vùng máng ăn (đã có vùng đã lưu)")
+                self.btn_draw.setText("Vẽ vùng máng ăn (đã lưu)")
             else:
-                self.btn_draw.setText("Bắt đầu vẽ vùng máng ăn")
+                self.btn_draw.setText("Vẽ vùng máng ăn")
         except Exception as e:
             print(f"[CameraZoneWidget] Khong the doc vung mang an da luu ({path}): {e}")
 
@@ -1242,7 +1270,7 @@ class CameraZoneWidget(QWidget):
         """Giong het _load_zone_from_file() nhung danh cho VUNG CHUONG."""
         path = _pen_zone_config_path_cho_camera(self.active_camera_name)
         if not os.path.exists(path):
-            self.btn_draw_pen.setText("Bắt đầu vẽ vùng chuồng")
+            self.btn_draw_pen.setText("Vẽ vùng chuồng")
             return
         try:
             with open(path, "r", encoding="utf-8") as f:
@@ -1252,9 +1280,9 @@ class CameraZoneWidget(QWidget):
             self.pen_zone_points = [tuple(p) for p in points]
             self.pen_zone_closed = bool(closed) and len(self.pen_zone_points) >= 3
             if self.pen_zone_closed:
-                self.btn_draw_pen.setText("Bắt đầu vẽ vùng chuồng (đã có vùng đã lưu)")
+                self.btn_draw_pen.setText("Vẽ vùng chuồng (đã lưu)")
             else:
-                self.btn_draw_pen.setText("Bắt đầu vẽ vùng chuồng")
+                self.btn_draw_pen.setText("Vẽ vùng chuồng")
         except Exception as e:
             print(f"[CameraZoneWidget] Khong the doc vung chuong da luu ({path}): {e}")
 
@@ -1306,7 +1334,7 @@ class CameraZoneWidget(QWidget):
             self.zone_closed = True
             self.drawing_enabled = False
             self.btn_draw.setChecked(False)
-            self.btn_draw.setText("Bắt đầu vẽ vùng máng ăn")
+            self.btn_draw.setText("Vẽ vùng máng ăn")
             self._save_zone_to_file()  # luu ngay khi vung duoc dong thanh cong
         else:
             QMessageBox.information(self, "Vùng chưa hợp lệ",
@@ -1318,7 +1346,7 @@ class CameraZoneWidget(QWidget):
             self.pen_zone_closed = True
             self.pen_drawing_enabled = False
             self.btn_draw_pen.setChecked(False)
-            self.btn_draw_pen.setText("Bắt đầu vẽ vùng chuồng")
+            self.btn_draw_pen.setText("Vẽ vùng chuồng")
             self._save_pen_zone_to_file()
         else:
             QMessageBox.information(self, "Vùng chưa hợp lệ",
@@ -1336,7 +1364,7 @@ class CameraZoneWidget(QWidget):
         if self.cap is None or not self.is_connected:
             self._try_connect_active_camera()  # tu gioi han theo chu ky, khong force
             if self.cap is None or not self.is_connected:
-                return self._ve_frame_demo(canh_bao="MẤT KẾT NỐI CAMERA - đang tự thử kết nối lại...")
+                return self._ve_frame_demo(canh_bao="MAT KET NOI CAMERA - dang tu thu ket noi lai...")
 
         ok, frame = self.cap.read()
         if ok and frame is not None:
@@ -1347,7 +1375,7 @@ class CameraZoneWidget(QWidget):
         # hoat lai _try_connect_active_camera() theo dung chu ky retry
         self.is_connected = False
         self._update_connection_status_label()
-        return self._ve_frame_demo(canh_bao="MẤT KẾT NỐI CAMERA - đang tự thử kết nối lại...")
+        return self._ve_frame_demo(canh_bao="MAT KET NOI CAMERA - dang tu thu ket noi lai...")
 
     def _ve_frame_demo(self, canh_bao=None):
         """Ve khung hinh gia lap (chuong trai + cac 'con lon' di chuyen)."""

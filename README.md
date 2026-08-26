@@ -1,7 +1,12 @@
-# Phần mềm HỆ THỐNG TRANG TRẠI THÔNG MINH (Python / PyQt5)
+# Phần mềm HỆ THỐNG CHUỒNG TRẠI THÔNG MINH (Python / PyQt5)
 
 Phần mềm desktop mô phỏng lại giao diện màn hình HMI (WeinView) gốc, gồm 6 tab
 điều hướng ở thanh dưới cùng: **HOME · SCREEN · MANUAL · SETTING · ALARM · CHART**.
+
+Kết nối trực tiếp với hệ thống chuồng trại chạy ESP32 + Blynk Cloud (2 chip:
+chip chính ESP32-S3 lo WiFi/relay/cảm biến, chip phụ ESP32-32D lo động cơ
+bước + loadcell, giao tiếp UART riêng — xem `ChipChinh_ESP32S3.ino` /
+`ChipPhu_ESP32_32D.ino`).
 
 ## 1. Cài đặt
 
@@ -11,77 +16,71 @@ Yêu cầu Python 3.9+. Cài các thư viện cần thiết:
 pip install -r requirements.txt
 ```
 
-(hoặc cài lẻ: `pip install PyQt5 opencv-python numpy matplotlib`)
+(hoặc cài lẻ: `pip install PyQt5 matplotlib requests`)
 
-## 2. Chạy chương trình
+## 2. Cấu hình trước khi chạy
+
+Mở `config.py`, điền đúng `BLYNK_AUTH_TOKEN` **giống hệt** với token trong
+firmware ESP32 (`#define BLYNK_AUTH_TOKEN "..."`).
+
+## 3. Chạy chương trình
 
 ```bash
 python main.py
 ```
 
-## 3. Cấu trúc thư mục
+## 4. Cấu trúc thư mục
 
 ```
-smart_farm_app/
+ChuongThongMinh2/
 ├── main.py                # Điểm khởi chạy, header + thanh điều hướng dưới + stack các tab
+├── config.py               # Token Blynk + các chu kỳ polling/scheduler
+├── blynk_client.py         # Gọi Blynk HTTP API (đọc/ghi Vpin) + BlynkPoller đọc định kỳ
+├── feed_coordinator.py     # Khóa/xác nhận trước khi gửi lệnh cho ăn (V4 + V6), dùng chung
+│                           # cho cả nút bấm tay (MANUAL) lẫn lịch tự động (scheduler)
+├── scheduler.py            # Gom lịch hẹn từ SETTING, đóng gói JSON, gửi vào V16 (ESP32 tự
+│                           # lưu NVS + tự chạy bằng NTP, không phụ thuộc app có mở hay không)
+├── Yolos26-200.pt          # Model YOLO đã train riêng để phát hiện con vật (dùng cho camera)
+├── zone_config.json         # Lưu vùng máng ăn đã vẽ trên camera (tồn tại qua các lần mở app)
 ├── requirements.txt
 └── ui/
-    ├── style.py            # Bảng màu / stylesheet chung (giao diện xanh dương - vàng nhạt)
-    ├── home_tab.py          # Tab HOME: dashboard + camera giám sát máng ăn (MỚI)
-    ├── camera_zone.py       # Widget camera: vẽ vùng (zone) + nhận diện ID lợn theo màu lưng
-    ├── screen_tab.py        # Tab SCREEN: cảm biến / đèn báo / trạng thái thiết bị
-    ├── manual_tab.py        # Tab MANUAL: lưới 3x3 nút bật/tắt thiết bị bằng tay
-    ├── setting_tab.py       # Tab SETTING: môi trường / động cơ cho ăn / lịch hoạt động / chiếu sáng
-    ├── alarm_tab.py         # Tab ALARM: bảng cảnh báo hiện tại + lịch sử lỗi
-    └── chart_tab.py         # Tab CHART: biểu đồ nhiệt độ/độ ẩm + placeholder bản đồ nhiệt lợn
+    ├── style.py            # Bảng màu / stylesheet chung
+    ├── home_tab.py         # Tab HOME: dashboard tổng quan + camera giám sát máng ăn
+    ├── camera_zone.py      # Widget camera: vẽ vùng, YOLO tracking (ByteTrack) + gán ID
+    │                       # theo màu lưng, tự đối chiếu định kỳ để sửa ID bị lệch
+    ├── screen_tab.py       # Tab SCREEN: cảm biến / đèn báo / trạng thái thiết bị
+    ├── manual_tab.py       # Tab MANUAL: lưới nút bật/tắt 8 relay + nút cho ăn bằng tay
+    ├── setting_tab.py      # Tab SETTING: ngưỡng môi trường (V17) / gram cho ăn / lịch hoạt động
+    ├── schedule_section.py # Widget lịch hẹn giờ dùng chung cho cho ăn/tắm/rửa chuồng/đèn
+    ├── alarm_tab.py        # Tab ALARM: bảng cảnh báo hiện tại + lịch sử lỗi
+    └── chart_tab.py        # Tab CHART: biểu đồ nhiệt độ/độ ẩm
 ```
 
-## 4. Chi tiết tab HOME (tab được nâng cấp thêm)
+## 5. Trạng thái tích hợp Blynk hiện tại
 
-Giữ nguyên toàn bộ bố cục tổng quan gốc (nhiệt độ, độ ẩm, lịch trình tiếp theo,
-thống kê hôm nay, trạng thái hệ thống, tổng quan vận hành), và bổ sung:
+| Tab | Đã nối Blynk thật? |
+|---|---|
+| MANUAL | Đã nối — bấm nút gọi thẳng `BlynkClient`, khóa relay đúng theo AUTO/MANUAL khớp firmware |
+| SETTING | Cần xác nhận đã gửi đúng JSON vào V16/V17 (xem mục 6) |
+| HOME / SCREEN / CHART | Còn dùng dữ liệu tĩnh/demo — cần nối `BlynkPoller` (đã có sẵn trong `blynk_client.py`, chỉ chưa khởi tạo trong `main.py`) |
+| ALARM | Chỉ có nút demo giả lập, chưa đọc `Blynk.logEvent` thật từ firmware |
 
-- **Camera giám sát máng ăn**: mặc định mở webcam số 0 (`cv2.VideoCapture(0)`).
-  Nếu máy không có camera, phần mềm tự chuyển sang **chế độ giả lập (demo)**
-  để vẫn xem được giao diện và test logic hoạt động.
-- **Vẽ vùng (zone) máng ăn**: bấm nút "Bắt đầu vẽ vùng máng ăn", sau đó:
-  - Click chuột **trái** trên khung hình để thêm từng điểm quanh khu vực máng ăn.
-  - **Double-click** (hoặc click chuột phải) để đóng vùng thành đa giác kín.
-  - Có thể bấm "Xóa vùng đã vẽ" để vẽ lại.
-- **Nhận diện ID lợn theo màu vùng lưng**: phần mềm dùng phương pháp phát hiện
-  màu (HSV color-blob detection) để giả lập việc mỗi con lợn được đánh dấu
-  bằng 1 màu sơn/thẻ màu riêng ở lưng (đóng vai trò như "ID"). Khi tâm điểm
-  của vùng màu đó nằm trong vùng máng ăn đã vẽ, ID lợn tương ứng sẽ hiện
-  trong danh sách "đang ăn tại máng".
-  - Bảng màu ID mặc định định nghĩa trong `ui/camera_zone.py`
-    (biến `PIG_COLOR_IDS`) — có thể chỉnh sửa ngưỡng màu HSV cho khớp với
-    màu sơn/thẻ đánh dấu thực tế của trại.
-  - Đây là **bản nền tảng (baseline) đơn giản**, đủ để chạy demo và mở rộng.
-    Khi cần độ chính xác cao hơn (nhiều lợn cùng màu, môi trường ánh sáng
-    phức tạp...), nên nâng cấp lên mô hình AI thật (YOLOv8 + DeepSORT/ByteTrack
-    để theo dõi ID xuyên suốt thời gian, không phụ thuộc màu sơn).
+## 6. Kiến trúc lịch hẹn giờ
 
-## 5. Tab CHART
+Lịch hẹn **không chạy đếm giờ trong Python** — vì như vậy sẽ phụ thuộc máy
+tính/app phải luôn mở. Thay vào đó:
 
-Hiện có biểu đồ nhiệt độ/độ ẩm theo thời gian (dữ liệu demo, thay bằng dữ liệu
-thật khi tích hợp cảm biến qua Serial/PLC/MQTT...).
+1. Người dùng thêm/sửa/xóa lịch trong tab SETTING
+2. `scheduler.py` gom toàn bộ lịch hiện có, đóng gói thành 1 chuỗi JSON, gửi
+   **1 lần** vào Vpin **V16**
+3. ESP32 (chip chính) nhận, lưu vào bộ nhớ NVS (giữ được qua mất điện), và
+   **tự dùng NTP để so giờ, tự kích hoạt** — hoàn toàn độc lập với máy tính
 
-Phần **"Bản đồ nhiệt & đường đi di chuyển của lợn"** hiện là khung placeholder —
-theo đúng yêu cầu, sẽ nâng cấp sau khi hệ thống camera + tracking đã thu thập
-đủ dữ liệu tọa độ di chuyển của từng ID lợn theo thời gian.
+Tương tự, ngưỡng nhiệt độ/độ ẩm trong SETTING được gửi vào **V17**, ESP32 tự
+áp dụng hysteresis độc lập cho từng thiết bị (quạt, sưởi, hút ẩm, phun sương).
 
-## 6. Kết nối với phần cứng thật (bước tiếp theo)
+## 7. Việc còn thiếu (gợi ý làm tiếp)
 
-Các tab hiện tại đang dùng dữ liệu tĩnh/demo để đúng bố cục giao diện. Để kết
-nối với hệ thống ESP32 + Blynk / PLC thật, gợi ý:
-
-- Đọc dữ liệu cảm biến qua Serial (`pyserial`) hoặc MQTT rồi cập nhật vào
-  `HomeTab._tick()` và `ScreenTab`.
-- Gửi lệnh điều khiển thiết bị (tab MANUAL) qua Serial/MQTT trong hàm
-  `DeviceToggle._toggle()`.
-- Lưu/đọc cấu hình (tab SETTING) ra file JSON hoặc gửi xuống PLC khi bấm
-  nút "SET...".
-- Ghi log cảnh báo thật (tab ALARM) thay cho nút demo hiện tại.
-
-Nếu cần, mình có thể viết thêm phần kết nối Serial/MQTT cụ thể cho phần cứng
-bạn đang dùng.
+- Nối `BlynkPoller` vào `HomeTab`/`ScreenTab`/`ChartTab` để hiển thị số liệu thật
+- Đọc `Blynk.logEvent` (Events API) để `AlarmTab` hiện cảnh báo thật từ firmware
+- Thêm lưu file JSON cục bộ cho lịch hẹn/ngưỡng môi trường, để mở lại app không mất cấu hình đã nhập

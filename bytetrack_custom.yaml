@@ -1,0 +1,19 @@
+# bytetrack_custom.yaml
+# SUA: file cau hinh ByteTrack RIENG cho du an nay - tang track_buffer tu
+# mac dinh 30 (~1.5-2s o 15-20 FPS) len 60 (~3-4s), de nhung lan MAT DAU
+# NGAN HAN (vd anh bi mo do di chuyen nhanh, con lon khuat sau con khac
+# vai khung hinh) KHONG lam ByteTrack xoa han track cu va gan ID MOI khi
+# con lon xuat hien lai - giup tracking on dinh/muot hon khi test di chuyen
+# nhanh. Dung file nay bang: model.track(frame, tracker="bytetrack_custom.yaml", ...)
+tracker_type: bytetrack
+
+track_high_thresh: 0.5    # nguong tin cay CAO de "khop" track cu voi phat hien moi
+track_low_thresh: 0.1     # nguong tin cay THAP van con duoc xet de KHOI PHUC track dang mat dau
+new_track_thresh: 0.6     # nguong tin cay de tao track MOI HOAN TOAN (giu nguyen mac dinh)
+
+# SUA: TANG tu 30 -> 60 - day la thay doi chinh, giup "khoan dung" lau hon
+# voi cac khung hinh mat dau lien tiep truoc khi that su xoa track.
+track_buffer: 60
+
+match_thresh: 0.8         # nguong IOU de ghep bounding box moi voi track cu
+fuse_score: true

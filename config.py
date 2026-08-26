@@ -16,22 +16,18 @@ BLYNK_POLL_INTERVAL_SEC = 3
 # Thời gian chờ tối đa (giây) cho mỗi request HTTP tới Blynk Cloud
 BLYNK_HTTP_TIMEOUT = 4
 
-# SUA: THEM MOI - dia chi Web Server LOCAL chay tren ESP32 chinh, dung lam
-# duong DU PHONG khi co WiFi/LAN nhung MAT INTERNET (khong toi duoc Blynk
-# Cloud). Mac dinh dung ten mDNS "chuongtrai.local" (ESP32 tu dang ky qua
-# thu vien ESPmDNS trong firmware). Neu mang cua ban KHONG ho tro mDNS
-# (mot so router/Windows can cai them Bonjour), doi sang IP LAN that cua
-# ESP32 (vd "192.168.1.50"), xem trong Serial Monitor dong "[WEB LOCAL] San
-# sang tai ...". De trong ("") de TAT han co che du phong nay.
-LOCAL_ESP32_HOST = "chuongtrai.local"
-
-# Thoi gian cho toi da (giay) cho MOI request goi sang Web Server local.
-# De NGAN vi day la mang LAN noi bo, phan hoi phai rat nhanh (thuong <100ms)
-# - neu cham hon nghia la ESP32 that su khong con tren mang, khong nen cho
-# lau lam nguoi dung cam thay ung dung bi "dong hinh".
-LOCAL_HTTP_TIMEOUT = 1.5
-
 # KHONG CON DUNG: truoc day dung cho AutoScheduler tu dem gio o Python (Huong
 # A, da bo). Gio lich chay hoan toan tren ESP32 (qua V16 + NTP), giu lai
 # hang so nay chi de tranh loi import neu code cu con tham chieu dau do.
 SCHEDULER_CHECK_INTERVAL_SEC = 15
+
+# ---------------- WEB SERVER LOCAL (LAN, du phong khi mat Internet) ----------------
+# Dia chi mDNS ESP32 tu quang ba (xem MDNS.begin("chuongtrai") trong
+# firmware) - KHONG can biet truoc IP, he dieu hanh (Windows/macOS/Linux
+# co dich vu mDNS) tu resolve duoc thanh IP that trong LAN.
+LOCAL_SERVER_HOST = "chuongtrai.local"
+
+# Timeout rieng cho request toi LAN (thuong nhanh hon Cloud nhieu vi khong
+# di qua Internet, nhung van can 1 nguong de khong treo giao dien qua lau
+# neu ESP32 bi tat/roi mang).
+LOCAL_HTTP_TIMEOUT = 8

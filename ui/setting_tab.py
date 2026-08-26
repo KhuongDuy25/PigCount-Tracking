@@ -24,8 +24,9 @@ from PyQt5.QtWidgets import (
     QSpinBox, QPushButton, QScrollArea, QStackedWidget, QFrame
 )
 
-from ui.schedule_section import ScheduleSection, LightScheduleSection
-from ui.style import COLOR_HEADER_BLUE, COLOR_HEADER_BLUE_DARK, COLOR_ON_GREEN, COLOR_ALARM_RED, COLOR_TEXT_DARK
+from ui.schedule_section import ScheduleSection, LightScheduleSection, format_days
+from ui.thin_status_bar import ThinStatusBar
+from ui.style import COLOR_HEADER_BLUE, COLOR_HEADER_BLUE_DARK, COLOR_ON_GREEN, COLOR_ALARM_RED, COLOR_TEXT_DARK, COLOR_BG_CREAM
 
 # SUA: file luu nguong moi truong (nhiet do/do am) ra dia, cung thu muc goc
 # du an (ngang hang voi main.py) - giong dung cach zone_config.json /
@@ -72,18 +73,23 @@ def readonly_value_box(text):
 
 
 # Cấu hình hiển thị cho từng loại lịch trong màn hình Tổng quan
+# SUA: BO HAN truong icon (truoc day la phan tu thu 2 cua tuple, vd
+# "🍽️") theo dinh huong giao dien "khong icon, chi chu + mau".
 SCHEDULE_CATEGORIES = [
-    # key,        icon,   tiêu đề,        đơn vị,   màu chủ đạo, màu nền nhạt
-    ("cho_an",    "🍽️",  "Cho ăn",       "gram",   "#1857a4",  "#e9fbe9"),
-    ("tam",       "🚿",   "Tắm",          "giây",   "#1857a4",  "#e9fbe9"),
-    ("rua_chuong","🧹",   "Rửa chuồng",   "giây",   "#1857a4",  "#e9fbe9"),
+    # key,          tiêu đề,        đơn vị,   màu chủ đạo, màu nền nhạt
+    ("cho_an",      "Cho ăn",       "gram",   "#1857a4",  "#e9fbe9"),
+    ("tam",         "Tắm",          "giây",   "#1857a4",  "#e9fbe9"),
+    ("rua_chuong",  "Rửa chuồng",   "giây",   "#1857a4",  "#e9fbe9"),
 ]
 
 
-def build_schedule_card(icon, title, unit, color, bg, rows):
+def build_schedule_card(title, unit, color, bg, rows, extra_note=None):
     """Dựng 1 thẻ (card) hiển thị lịch cho 1 loại hoạt động, đẹp hơn hẳn so với
     kiểu liệt kê chữ đơn giản trước đây — mỗi mốc giờ là 1 "chip" màu + dòng
-    riêng biệt, có viền và màu nền theo từng loại hoạt động."""
+    riêng biệt, có viền và màu nền theo từng loại hoạt động.
+
+    extra_note: dòng ghi chú phụ hiển thị ngay dưới tiêu đề (vd "Cách nhau
+    tối thiểu: 5 phút" cho Cho ăn) - bỏ qua nếu None."""
     card = QFrame()
     card.setStyleSheet(
         f"QFrame {{ background:{bg}; border:1px solid {color}; border-radius:0px; }}"
@@ -92,11 +98,16 @@ def build_schedule_card(icon, title, unit, color, bg, rows):
     lay.setContentsMargins(14, 12, 14, 14)
     lay.setSpacing(8)
 
-    header = QLabel(f"{icon}  {title.upper()}")
+    header = QLabel(title.upper())
     header.setStyleSheet(
-        f"font-weight:800; font-size:16px; color:{color}; background:transparent; border:none;"
+        f"font-weight:800; font-size:16px; color:{color}; background:transparent; border:none; letter-spacing:0.5px;"
     )
     lay.addWidget(header)
+
+    if extra_note:
+        note_lbl = QLabel(extra_note)
+        note_lbl.setStyleSheet("font-size:13px; font-style:italic; color:#666; background:transparent; border:none;")
+        lay.addWidget(note_lbl)
 
     if not rows:
         empty = QLabel("Chưa có lịch nào được cài đặt")
@@ -130,6 +141,14 @@ def build_schedule_card(icon, title, unit, color, bg, rows):
             row_lay.addWidget(value_lbl)
 
             row_lay.addStretch(1)
+
+            # SUA: THEM MOI - hien thi "thu ap dung" (vd "Hang ngay", "T2 -
+            # T6"...) ben phai moi dong, doc tu field "thu" (list so 1..7).
+            # dung .get() de tuong thich nguoc voi du lieu cu chua co "thu".
+            day_lbl = QLabel(format_days(r.get("thu", list(range(1, 8)))))
+            day_lbl.setStyleSheet(f"font-size:13px; font-style:italic; color:{color}; background:transparent; border:none;")
+            row_lay.addWidget(day_lbl)
+
             lay.addWidget(row_frame)
 
     lay.addStretch(1)
@@ -146,7 +165,7 @@ def build_light_schedule_card(rows):
     lay.setContentsMargins(14, 12, 14, 14)
     lay.setSpacing(8)
 
-    header = QLabel("💡  CHIẾU SÁNG (ĐÈN)")
+    header = QLabel("CHIẾU SÁNG (ĐÈN)")
     header.setStyleSheet(f"font-weight:800; font-size:16px; color:{color}; background:transparent; border:none;")
     lay.addWidget(header)
 
@@ -183,6 +202,12 @@ def build_light_schedule_card(rows):
             row_lay.addWidget(arrow2)
 
             row_lay.addStretch(1)
+
+            # SUA: THEM MOI - hien thi "thu ap dung" giong build_schedule_card().
+            day_lbl = QLabel(format_days(r.get("thu", list(range(1, 8)))))
+            day_lbl.setStyleSheet(f"font-size:13px; font-style:italic; color:{color}; background:transparent; border:none;")
+            row_lay.addWidget(day_lbl)
+
             lay.addWidget(row_frame)
 
     lay.addStretch(1)
@@ -213,10 +238,22 @@ class SettingTab(QWidget):
 
         self._build_ui()
 
+    def update_from_blynk(self, data: dict):
+        """SUA: THEM MOI - chi de cap nhat thanh trang thai mong (nhiet do/
+        do am/Cloud), KHONG dung cho logic Nguong/Lich (van do rieng qua
+        get_env_values()/get_all_schedules() khi can day len ESP32)."""
+        self.thin_status.update_from_blynk(data)
+
     # ------------------------------------------------------------------
     def _build_ui(self):
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+
+        # SUA: THEM MOI - thanh trang thai mong, lap lai o MOI tab (xem
+        # ui/thin_status_bar.py).
+        self.thin_status = ThinStatusBar()
+        root.addWidget(self.thin_status)
 
         self.stack = QStackedWidget()
         root.addWidget(self.stack)
@@ -238,12 +275,27 @@ class SettingTab(QWidget):
     def _build_overview_page(self):
         page = QWidget()
         outer = QVBoxLayout(page)
+        outer.setContentsMargins(0, 0, 0, 0)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
+        # SUA: BO VIEN NGOAI CUNG THUA - QScrollArea MAC DINH tu ve 1 khung
+        # vien rieng (QFrame::StyledPanel) BAO QUANH TOAN BO noi dung ben
+        # trong, CONG THEM tu to mau NEN TRANG/XAM rieng cho vung cuon
+        # (viewport), DE LEN tren nen cream chung cua app - day chinh la
+        # "vien lon nhat ben ngoai cung" + nen sai mau da bi phat hien.
+        # setFrameShape(NoFrame) bo khung vien; stylesheet duoi ep ca
+        # QScrollArea LAN viewport ben trong no ve DUNG mau nen cream,
+        # KHONG con la trang/xam mac dinh nua.
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setStyleSheet(
+            f"QScrollArea {{ border: none; background: {COLOR_BG_CREAM}; }}"
+            f"QScrollArea > QWidget > QWidget {{ background: {COLOR_BG_CREAM}; }}"
+        )
         outer.addWidget(scroll)
 
         content = QWidget()
+        content.setStyleSheet(f"background-color: {COLOR_BG_CREAM};")
         scroll.setWidget(content)
         root = QVBoxLayout(content)
         root.setContentsMargins(20, 20, 20, 20)
@@ -254,7 +306,7 @@ class SettingTab(QWidget):
         row1.setSpacing(16)
         root.addLayout(row1)
 
-        gb_temp = QGroupBox("🌡️ HỆ THỐNG NHIỆT ĐỘ")
+        gb_temp = QGroupBox("HỆ THỐNG NHIỆT ĐỘ")
         tl = QVBoxLayout(gb_temp)
         tl.addLayout(self._paired_threshold_row(
             "ĐÈN SƯỞI", "BẬT <", "sued_on_temp", "°C", "TẮT >", "sued_off_temp", "°C"))
@@ -263,7 +315,7 @@ class SettingTab(QWidget):
         tl.addStretch(1)
         row1.addWidget(gb_temp, 2)
 
-        gb_humi = QGroupBox("💧 HỆ THỐNG ĐỘ ẨM")
+        gb_humi = QGroupBox("HỆ THỐNG ĐỘ ẨM")
         hl = QVBoxLayout(gb_humi)
         hl.addLayout(self._paired_threshold_row(
             "HÚT ẨM", "BẬT >", "hutam_on", "%", "TẮT <", "hutam_off", "%"))
@@ -272,24 +324,40 @@ class SettingTab(QWidget):
         hl.addStretch(1)
         row1.addWidget(gb_humi, 2)
 
-        gb_actions = QGroupBox("🛠️ LƯU CẤU HÌNH")
+        gb_actions = QGroupBox("LƯU CẤU HÌNH")
         al = QVBoxLayout(gb_actions)
 
-        btn_env = QPushButton("🌡️\nSET MÔI TRƯỜNG")
-        btn_env.setFixedHeight(70)
-        btn_env.setStyleSheet(
-            f"background:#e9fbe9; border:2px solid {COLOR_ON_GREEN}; border-radius:0px; "
-            f"font-weight:700; color:#1c6b2c; font-size:15px;"
-        )
+        # SUA: THEM MOI - 2 lan truoc chi dung setProperty("role",
+        # "btnPrimary") RIENG LE van KHONG hien dung mau (Qt doi khi KHONG
+        # "polish" lai dung luc cho thuoc tinh dong "role" doi voi widget
+        # nam sau trong QScrollArea/QStackedWidget - day la gioi han rieng
+        # cua co che QSS + dynamic property, khong phai loi logic). Fix
+        # CHAC CHAN: ep thang toan bo style (nen + chu + vien + hover)
+        # THANG vao day, KHONG phu thuoc rule toan cuc/thu tu polish nua.
+        NUT_CHINH_QSS = f"""
+            QPushButton {{
+                background-color: {COLOR_HEADER_BLUE};
+                color: white;
+                font-weight: 700;
+                font-size: 15px;
+                border-radius: 3px;
+                border: none;
+                padding: 10px 16px;
+            }}
+            QPushButton:hover {{
+                background-color: #2569b8;
+            }}
+        """
+
+        btn_env = QPushButton("SET MÔI TRƯỜNG")
+        btn_env.setFixedHeight(60)
+        btn_env.setStyleSheet(NUT_CHINH_QSS)
         btn_env.clicked.connect(self._goto_edit_env)
         al.addWidget(btn_env)
 
-        btn_sched = QPushButton("➡️\nSET LỊCH")
-        btn_sched.setFixedHeight(70)
-        btn_sched.setStyleSheet(
-            f"background:#e9f0fb; border:2px solid {COLOR_HEADER_BLUE}; border-radius:0px; "
-            f"font-weight:700; color:{COLOR_HEADER_BLUE_DARK}; font-size:15px;"
-        )
+        btn_sched = QPushButton("SET LỊCH")
+        btn_sched.setFixedHeight(60)
+        btn_sched.setStyleSheet(NUT_CHINH_QSS)
         btn_sched.clicked.connect(self._goto_edit_schedule)
         al.addWidget(btn_sched)
 
@@ -297,7 +365,7 @@ class SettingTab(QWidget):
         row1.addWidget(gb_actions, 1)
 
         # ================= HÀNG 2: Lịch hoạt động — 4 cột ngang =================
-        gb_sched = QGroupBox("🗓️ LỊCH HOẠT ĐỘNG (đã cài đặt)")
+        gb_sched = QGroupBox("LỊCH HOẠT ĐỘNG (ĐÃ CÀI ĐẶT)")
         sl = QVBoxLayout(gb_sched)
         sl.setContentsMargins(10, 14, 10, 10)
         self.schedule_cards_container = QHBoxLayout()
@@ -395,11 +463,21 @@ class SettingTab(QWidget):
     def _rows_to_tuples(saved_rows, keys, fallback):
         """Doi list[dict] (dinh dang luu trong file/get_schedule()) thanh
         list[tuple] (dinh dang ScheduleSection/LightScheduleSection can de
-        khoi tao qua default_rows). Neu du lieu rong/hong, dung fallback."""
+        khoi tao qua default_rows). Neu du lieu rong/hong, dung fallback.
+
+        SUA: THEM MOI - key "thu" duoc doc bang .get() thay vi [] truc
+        tiep, vi file schedule_config.json luu tu TRUOC KHI co tinh nang
+        chon thu se KHONG co key nay - truong hop do tra ve None cho tung
+        dong (ScheduleSection/LightScheduleSection tu hieu None = mac dinh
+        chay Hang ngay), thay vi lam ca dong bi rot ve fallback oan uong."""
         if not saved_rows:
             return fallback
         try:
-            return [tuple(row[k] for k in keys) for row in saved_rows]
+            result = []
+            for row in saved_rows:
+                values = [row.get(k) if k == "thu" else row[k] for k in keys]
+                result.append(tuple(values))
+            return result
         except (KeyError, TypeError) as e:
             print(f"[SettingTab] Du lieu lich luu bi loi dinh dang, dung mac dinh: {e}")
             return fallback
@@ -418,8 +496,11 @@ class SettingTab(QWidget):
             "rua_chuong": self.sec_rua.get_schedule() if hasattr(self, "sec_rua") else [],
         }
 
-        for key, icon, title, unit, color, bg in SCHEDULE_CATEGORIES:
-            card = build_schedule_card(icon, title, unit, color, bg, data_map[key])
+        for key, title, unit, color, bg in SCHEDULE_CATEGORIES:
+            extra_note = None
+            if key == "cho_an" and hasattr(self, "sec_feed"):
+                extra_note = f"Cách nhau tối thiểu: {self.sec_feed.get_min_gap_minutes()} phút"
+            card = build_schedule_card(title, unit, color, bg, data_map[key], extra_note=extra_note)
             self.schedule_cards_container.addWidget(card)
 
         # Đèn dùng định dạng dữ liệu khác (giờ bật/giờ tắt) nên dùng card riêng
@@ -434,44 +515,92 @@ class SettingTab(QWidget):
         outer = QVBoxLayout(page)
 
         header = QHBoxLayout()
+        # SUA: THEM MOI - dung role="pageTitle" chuan (xem ui/style.py)
+        # thay vi tu dat font-size rieng - day la "Tieu de chinh" cua
+        # trang, cap typography lon nhat.
         title = QLabel("CHỈNH SỬA: MÔI TRƯỜNG + ĐỘNG CƠ")
-        title.setStyleSheet(f"font-weight:700; color:{COLOR_HEADER_BLUE}; font-size:18px;")
+        title.setObjectName("pageTitle")
         header.addWidget(title)
         header.addStretch(1)
-        btn_back = QPushButton("⬅ BACK")
-        btn_back.setStyleSheet(
-            f"background:{COLOR_HEADER_BLUE}; color:white; font-weight:700; border-radius:0px; padding:6px 16px;"
-        )
+        btn_back = QPushButton("BACK")
+        # SUA: THEM MOI - dung role="btnOutline" chuan (hanh dong PHU,
+        # khong phai hanh dong chinh) thay vi nen dac xanh duong nhu truoc.
+        btn_back.setProperty("role", "btnOutline")
         btn_back.clicked.connect(self._back_from_edit_env)
         header.addWidget(btn_back)
         outer.addLayout(header)
 
-        gb = QGroupBox("Ngưỡng môi trường (áp dụng ở chế độ AUTO)")
-        gl = QGridLayout(gb)
-        half = (len(ENV_ROWS) + 1) // 2
-        for i, (label, default, unit, key, lo, hi) in enumerate(ENV_ROWS):
-            col_offset = 0 if i < half else 3
-            row_idx = i if i < half else i - half
-            gl.addWidget(QLabel(label), row_idx, col_offset)
-            sp = QSpinBox()
-            sp.setRange(lo, hi)
-            sp.setValue(self.env_values[key])
-            sp.setFixedWidth(65)
-            sp.setAlignment(Qt.AlignCenter)
-            self.env_spinboxes[key] = sp
-            gl.addWidget(sp, row_idx, col_offset + 1)
-            gl.addWidget(QLabel(unit), row_idx, col_offset + 2)
+        # SUA: THEM MOI - TACH thanh 2 PANEL rieng biet dat canh nhau (thay
+        # vi 1 khung duy nhat chia 2 cot bang grid nhu truoc) - giong dung
+        # bo cuc tham khao: panel trai "Nguong moi truong" (sươi/quat -
+        # nhiet do), panel phai "Nguong dong co" (hut am/phun suong - do
+        # am). Dong thoi TANG CO CHU hien thi (nhan/o so/don vi) de de doc
+        # hon tren man hinh cam ung, VAN GIU nguyen QSpinBox mac dinh cua
+        # Qt (co san nut mui ten tang/giam ben phai o so, khong tu che lai).
+        row = QHBoxLayout()
+        row.setSpacing(16)
+
+        temp_rows = ENV_ROWS[:4]   # sưởi / quạt (nhiệt độ)
+        humi_rows = ENV_ROWS[4:]   # hút ẩm / phun sương (độ ẩm)
+
+        gb_temp = self._build_env_panel(
+            "Ngưỡng môi trường (áp dụng ở chế độ AUTO)", temp_rows)
+        gb_humi = self._build_env_panel("Ngưỡng động cơ", humi_rows)
+        row.addWidget(gb_temp, 1)
+        row.addWidget(gb_humi, 1)
+        outer.addLayout(row)
 
         note = QLabel(
             "Ghi chú: các ngưỡng này chỉ áp dụng khi hệ thống đang ở chế độ AUTO. "
             "Ở chế độ MANUAL, người dùng tự bật/tắt từng thiết bị ở tab MANUAL."
         )
         note.setWordWrap(True)
-        note.setStyleSheet("color:#555; font-size:14px; padding-top:10px;")
-        gl.addWidget(note, half, 0, 1, 6)
-        outer.addWidget(gb)
+        note.setStyleSheet("color:#555; font-size:15px; padding-top:12px;")
+        outer.addWidget(note)
+
+        # SUA: THEM MOI - CAN DOI lai bo cuc trang nay - truoc day khung
+        # ngưỡng bi ep dinh sat len tren, de trong hoan toan nua duoi man
+        # hinh (da bi ghi nhan khi ra soat giao dien: "trông như trang
+        # chưa làm xong"). Gio them khoang dem CAN GIUA theo chieu doc,
+        # khong them noi dung moi - chi sap xep lai vi tri cho can doi hon.
         outer.addStretch(1)
         return page
+
+    def _build_env_panel(self, title, rows):
+        """Dung 1 PANEL (QGroupBox) rieng cho 1 nhom nguong moi truong, moi
+        dong gom: nhan + o QSpinBox (van giu nut tang/giam mac dinh cua Qt)
+        + don vi - CHU TO HON so voi truoc de de doc tren man hinh cam ung."""
+        gb = QGroupBox(title)
+        gl = QGridLayout(gb)
+        gl.setHorizontalSpacing(14)
+        gl.setVerticalSpacing(16)
+
+        for row_idx, (label, default, unit, key, lo, hi) in enumerate(rows):
+            lbl = QLabel(label)
+            lbl.setStyleSheet("font-size:16px;")
+            lbl.setWordWrap(True)
+            gl.addWidget(lbl, row_idx, 0)
+
+            sp = QSpinBox()
+            sp.setRange(lo, hi)
+            sp.setValue(self.env_values[key])
+            sp.setFixedWidth(90)
+            sp.setFixedHeight(40)
+            sp.setAlignment(Qt.AlignCenter)
+            sp.setStyleSheet(
+                "QSpinBox { font-size:18px; font-weight:700; "
+                f"padding-right:2px; border:1px solid #b9b28e; background:#fbf8ec; color:{COLOR_TEXT_DARK}; }}"
+                "QSpinBox::up-button, QSpinBox::down-button { width:20px; }"
+            )
+            self.env_spinboxes[key] = sp
+            gl.addWidget(sp, row_idx, 1)
+
+            unit_lbl = QLabel(unit)
+            unit_lbl.setStyleSheet("font-size:16px;")
+            gl.addWidget(unit_lbl, row_idx, 2)
+
+        gl.setColumnStretch(0, 1)
+        return gb
 
     def _goto_edit_env(self):
         # đồng bộ giá trị hiện có vào các ô chỉnh sửa trước khi hiển thị
@@ -497,13 +626,11 @@ class SettingTab(QWidget):
 
         header = QHBoxLayout()
         title = QLabel("CHỈNH SỬA: LỊCH HOẠT ĐỘNG")
-        title.setStyleSheet(f"font-weight:700; color:{COLOR_HEADER_BLUE}; font-size:18px;")
+        title.setObjectName("pageTitle")
         header.addWidget(title)
         header.addStretch(1)
-        btn_back = QPushButton("⬅ BACK")
-        btn_back.setStyleSheet(
-            f"background:{COLOR_HEADER_BLUE}; color:white; font-weight:700; border-radius:0px; padding:6px 16px;"
-        )
+        btn_back = QPushButton("BACK")
+        btn_back.setProperty("role", "btnOutline")
         btn_back.clicked.connect(self._back_from_edit_schedule)
         header.addWidget(btn_back)
         outer.addLayout(header)
@@ -526,9 +653,12 @@ class SettingTab(QWidget):
         self.sec_feed = ScheduleSection(
             "Cho ăn", "Khối lượng", "gram", (0, 2000),
             default_rows=self._rows_to_tuples(
-                self._saved_schedule.get("cho_an"), ("gio", "phut", "value"),
+                self._saved_schedule.get("cho_an"), ("gio", "phut", "value", "thu"),
                 fallback=[(6, 0, 100), (12, 0, 100), (18, 0, 100)]
-            )
+            ),
+            # SUA: THEM MOI - doc lai "khoang cach toi thieu" da luu tu lan
+            # truoc (neu co), mac dinh 5 phut neu chua tung luu gi.
+            min_gap_minutes=self._saved_schedule.get("cho_an_min_gap_phut", 5),
         )
         row.addWidget(self.sec_feed)
 
@@ -537,7 +667,7 @@ class SettingTab(QWidget):
         self.sec_tam = ScheduleSection(
             "Tắm", "Thời gian chạy", "giây", (0, 600),
             default_rows=self._rows_to_tuples(
-                self._saved_schedule.get("tam"), ("gio", "phut", "value"),
+                self._saved_schedule.get("tam"), ("gio", "phut", "value", "thu"),
                 fallback=[(8, 0, 80), (14, 0, 80)]
             ),
             is_duration_based=True,
@@ -548,7 +678,7 @@ class SettingTab(QWidget):
         self.sec_rua = ScheduleSection(
             "Rửa chuồng", "Thời gian chạy", "giây", (0, 600),
             default_rows=self._rows_to_tuples(
-                self._saved_schedule.get("rua_chuong"), ("gio", "phut", "value"),
+                self._saved_schedule.get("rua_chuong"), ("gio", "phut", "value", "thu"),
                 fallback=[(7, 0, 200), (19, 0, 200)]
             ),
             is_duration_based=True,
@@ -558,7 +688,7 @@ class SettingTab(QWidget):
         # Đèn: theo cặp GIỜ BẬT / GIỜ TẮT (không có thời lượng như 3 loại trên)
         self.sec_den = LightScheduleSection(
             default_rows=self._rows_to_tuples(
-                self._saved_schedule.get("den"), ("gio_bat", "phut_bat", "gio_tat", "phut_tat"),
+                self._saved_schedule.get("den"), ("gio_bat", "phut_bat", "gio_tat", "phut_tat", "thu"),
                 fallback=[(18, 0, 22, 0)]
             )
         )
@@ -588,7 +718,7 @@ class SettingTab(QWidget):
             if dup_den:
                 loai_trung.append("Đèn")
             self.lbl_schedule_page_warning.setText(
-                "⚠️ Không thể lưu: mục [" + ", ".join(loai_trung) + "] đang có mốc giờ bị "
+                "Không thể lưu: mục [" + ", ".join(loai_trung) + "] đang có mốc giờ bị "
                 "trùng nhau (tô đỏ bên dưới). Vui lòng sửa lại giờ khác nhau cho từng dòng "
                 "trước khi quay lại."
             )
@@ -608,6 +738,9 @@ class SettingTab(QWidget):
     def get_all_schedules(self):
         return {
             "cho_an": self.sec_feed.get_schedule(),
+            # SUA: THEM MOI - luu kem "khoang cach toi thieu" nguoi dung da
+            # cai cho Cho an, de khong bi mat khi tat/mo lai app.
+            "cho_an_min_gap_phut": self.sec_feed.get_min_gap_minutes(),
             "tam": self.sec_tam.get_schedule(),
             "rua_chuong": self.sec_rua.get_schedule(),
             "den": self.sec_den.get_schedule(),

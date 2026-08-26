@@ -239,20 +239,27 @@ class BlynkPoller(QThread):
     ALARM_PIN = "V18"  # SUA: THEM MOI - noi dung canh bao gan nhat tu guiCanhBaoAnToan() ben firmware
     ALL_PINS = SENSOR_PINS + DEVICE_PINS + [ALARM_PIN]
 
-    def __init__(self, client: BlynkClient, interval_sec=3, parent=None):
+    def __init__(self, client: BlynkClient, interval_sec=3, parent=None, cloud_client=None):
         super().__init__(parent)
         self.client = client
         self.interval_sec = interval_sec
         self._running = True
+        # SUA: THEM MOI - "cloud_client" RIENG, LUON LUON dung de kiem tra
+        # ESP32 co dang ket noi CLOUD hay khong - TACH BIET HOAN TOAN voi
+        # "client" (co the la ConnectionManager dang o mode Local). Ly do:
+        # nguoi dung can biet CHINH XAC ESP32 co Internet/Cloud hay khong
+        # (de quyet dinh co can chuyen qua Local o tab MANUAL hay khong),
+        # BAT KE Desktop dang dieu khien qua nguon nao. Neu khong truyen
+        # rieng, mac dinh dung lai "client" nhu cu (tuong thich nguoc).
+        self.cloud_client = cloud_client if cloud_client is not None else client
 
     def run(self):
         while self._running:
             raw = self.client.get_pins(self.ALL_PINS)
-            # SUA: THEM MOI - hoi THAT xem ESP32 co dang online hay khong
-            # (khac han viec doc pin, van "thanh cong" du thiet bi da
-            # offline vi Blynk Cloud tra ve gia tri cache cu). Xem
-            # is_device_online() de biet ly do can co hoi rieng nay.
-            device_online = self.client.is_device_online()
+            # SUA: doi ten bien local cho ro - day la trang thai CLOUD THAT
+            # SU cua ESP32, LUON LUON hoi qua self.cloud_client (KHONG phu
+            # thuoc client dang dung Local hay Cloud de dieu khien).
+            device_online_cloud = self.cloud_client.is_device_online()
             data = {
                 "temp": raw.get("V0"),
                 "humi": raw.get("V1"),
@@ -261,7 +268,7 @@ class BlynkPoller(QThread):
                 "mode": raw.get("V5"),
                 "devices": {p: raw.get(p) for p in self.DEVICE_PINS},
                 "alarm": raw.get(self.ALARM_PIN),
-                "device_online": device_online,
+                "device_online": device_online_cloud,
             }
             self.data_updated.emit(data)
             for _ in range(self.interval_sec * 10):

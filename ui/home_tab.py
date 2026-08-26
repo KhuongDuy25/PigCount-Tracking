@@ -20,6 +20,8 @@ trí con vật lên sơ đồ tọa độ trại, khác với overlay trên khun
 đang có). Nếu bạn thực sự muốn bản đồ 2D riêng, báo lại để làm thêm.
 """
 
+import os
+import json
 import time
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtWidgets import (
@@ -27,6 +29,13 @@ from PyQt5.QtWidgets import (
 )
 
 from ui.camera_zone import CameraZoneWidget
+from ui.thin_status_bar import ThinStatusBar
+
+# SUA: THEM MOI - luu "Thong ke hom nay" ra file JSON, cung quy uoc voi
+# alarm_tab.py/setting_tab.py (_BASE_DIR = thu muc goc project). Truoc day
+# _stat_counts CHI o trong RAM -> tat app la mat het, phai bam lai tu 0.
+_BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DAILY_STATS_PATH = os.path.join(_BASE_DIR, "daily_stats.json")
 
 
 # ----------------------------------------------------------------------
@@ -110,15 +119,19 @@ class StatusDot(QLabel):
 # không phải trạng thái bật/tắt ổn định nên không hợp để hiện ON/OFF ở đây)
 # SUA: BO HAN truong icon (truoc day la phan tu dau tien cua tuple) theo
 # dinh huong giao dien "khong icon, chi chu + mau".
+# SUA: THEM MOI - dong bo TEN HIEN THI voi DEVICES trong ui/manual_tab.py -
+# truoc day HOME goi "Den Suoi"/"Bom San"/"Bom Tam"/"Bom Phun Suong" trong
+# khi MANUAL goi "Suoi"/"Rua Chuong"/"Tam"/"Phun Suong" cho CUNG 1 pin,
+# khien nguoi dung phai tu suy luan 2 ten co phai la 1 thiet bi khong.
 ACTUATOR_ROWS = [
     ("Quạt Thổi", "V7"),
     ("Quạt Hút", "V8"),
     ("Đèn", "V9"),
-    ("Đèn Sưởi", "V10"),
+    ("Sưởi", "V10"),
     ("Bơm Máng", "V11"),
-    ("Bơm Sàn", "V12"),
-    ("Bơm Tắm", "V13"),
-    ("Bơm Phun Sương", "V14"),
+    ("Rửa Chuồng", "V12"),
+    ("Tắm", "V13"),
+    ("Phun Sương", "V14"),
 ]
 
 
@@ -132,6 +145,12 @@ class HomeTab(QWidget):
         self._stat_counts = {"cho_an": 0, "tam": 0, "rua_chuong": 0}
         self.device_status_labels = {}  # pin -> QLabel (khối Cơ cấu chấp hành)
         self._build_ui()
+        # SUA: THEM MOI - doc lai thong ke DA LUU tu lan chay truoc (neu
+        # dung ngay hom nay), NGAY SAU _build_ui() de co the cap nhat label
+        # hien thi luon, khong phai cho toi vong poll dau tien (3s) moi
+        # thay so cu hien ra.
+        self._doc_thong_ke_da_luu()
+        self._hien_thi_thong_ke()
         self.timer = QTimer(self)
         self.timer.timeout.connect(self._tick)
         self.timer.start(1000)
@@ -141,7 +160,20 @@ class HomeTab(QWidget):
 
     # ------------------------------------------------------------------
     def _build_ui(self):
-        root = QVBoxLayout(self)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        # SUA: THEM MOI - thanh trang thai mong, lap lai o MOI tab (xem
+        # ui/thin_status_bar.py) - HOME von da co sidebar chi tiet rieng,
+        # nhung van them thanh nay o tren cung de GIU DUNG 1 ngon ngu thi
+        # giac dong nhat xuyen suot cac tab, khong rieng gi HOME khac biet.
+        self.thin_status = ThinStatusBar()
+        outer.addWidget(self.thin_status)
+
+        root = QVBoxLayout()
+        root.setContentsMargins(14, 12, 14, 14)
+        outer.addLayout(root)
 
         top_row = QHBoxLayout()
         root.addLayout(top_row, 3)
@@ -194,6 +226,15 @@ class HomeTab(QWidget):
         self.lbl_state = QLabel("Chưa kết nối")
         self.lbl_state.setStyleSheet("color:#9a9a9a; font-weight:700;")
         ol.addWidget(self.lbl_state, 2, 1)
+
+        # SUA: THEM MOI - dong goi y hanh dong, CHI hien khi ESP32 mat Cloud,
+        # nhac nguoi dung qua tab MANUAL chon nguon LOCAL de van dieu khien
+        # duoc (thay vi phai tu doan trang thai roi tu di tim).
+        self.lbl_hint = QLabel("")
+        self.lbl_hint.setStyleSheet("color:#d18b1c; font-size:12px;")
+        self.lbl_hint.setWordWrap(True)
+        self.lbl_hint.setVisible(False)
+        ol.addWidget(self.lbl_hint, 3, 0, 1, 2)
         left.addWidget(gb_over)
 
         gb_stat = QGroupBox("Thống kê hôm nay")
@@ -245,6 +286,10 @@ class HomeTab(QWidget):
         """Nhận dict từ BlynkPoller.data_updated - gộp chung việc từng tách
         riêng HomeTab (cảm biến/lịch/thống kê) VÀ ScreenTab cũ (trạng thái
         8 relay) vào 1 chỗ duy nhất."""
+        # SUA: THEM MOI - cap nhat thanh trang thai mong (dong bo voi moi
+        # tab khac, xem ui/thin_status_bar.py).
+        self.thin_status.update_from_blynk(data)
+
         temp = data.get("temp")
         humi = data.get("humi")
         cam = data.get("cam")
@@ -305,14 +350,40 @@ class HomeTab(QWidget):
         # ket noi toi Blynk Cloud. device_online=None nghia la KHONG hoi
         # duoc rieng cau nay (loi mang luc goi isHardwareConnected) - van
         # coi la binh thuong vi it nhat pin van doc duoc.
-        if device_online is False:
+        # SUA: THEM MOI - device_online GIO LUON LA trang thai CLOUD THAT SU
+        # cua ESP32 (BlynkPoller da doi sang dung cloud_client RIENG, xem
+        # blynk_client.py), KHONG con phu thuoc nguon dang chon o tab
+        # MANUAL nua. Nghia la: du ban dang dieu khien qua Local, dong nay
+        # VAN bao dung neu ESP32 that su da mat Cloud/Internet - day chinh
+        # la tin hieu de nguoi dung biet CAN qua tab MANUAL chon Local moi
+        # dieu khien duoc (neu chua chon san).
+        # SUA: SUA LOI - truoc day dieu kien la "if device_online is False"
+        # (chi rieng False), khien gia tri None BI COI NHU True (hien thi
+        # "DA KET NOI CLOUD" - XANH - SAI). None xay ra khi CHINH MAY TINH
+        # KHONG GOI DUOC toi Blynk Cloud de hoi isHardwareConnected (vd
+        # test bang hotspot dien thoai: tat Data la CA may tinh LAN ESP32
+        # deu mat Internet cung luc, vi dung chung 1 duong Internet duy
+        # nhat) - luc do KHONG PHAN BIET DUOC "ESP32 that su offline" hay
+        # "may tinh tu no khong hoi duoc", nhung VOI NGUOI DUNG thi 2
+        # truong hop nay CO KET QUA GIONG HET NHAU: Cloud KHONG DUNG DUOC
+        # luc nay, BAT KE ly do gi - nen phai coi None GIONG False, KHONG
+        # duoc coi la "binh thuong".
+        if device_online is not True:
             self.dot_system.set_on(False)
-            self.lbl_state.setText("ESP32 ĐANG OFFLINE")
+            if device_online is False:
+                self.lbl_state.setText("ESP32 MẤT KẾT NỐI CLOUD")
+            else:  # None - khong hoi duoc, rat co the may tinh cung dang mat Internet
+                self.lbl_state.setText("KHÔNG KIỂM TRA ĐƯỢC CLOUD (có thể máy tính cũng mất Internet)")
             self.lbl_state.setStyleSheet("color:#d13c3c; font-weight:700;")
+            self.lbl_hint.setText(
+                "→ Vẫn còn WiFi/LAN thì qua tab MANUAL, chọn nguồn LOCAL để tiếp tục điều khiển."
+            )
+            self.lbl_hint.setVisible(True)
         else:
             self.dot_system.set_on(True)
-            self.lbl_state.setText("Bình thường")
+            self.lbl_state.setText("ESP32 ĐÃ KẾT NỐI CLOUD")
             self.lbl_state.setStyleSheet("color:#2fae4e; font-weight:700;")
+            self.lbl_hint.setVisible(False)
         self._last_data_time = time.time()
 
         self._cap_nhat_thong_ke(devices)
@@ -325,6 +396,7 @@ class HomeTab(QWidget):
             self._prev_devices = {}
 
         pin_map = {"V6": "cho_an", "V13": "tam", "V12": "rua_chuong"}
+        co_thay_doi = False
         for pin, kind in pin_map.items():
             val = devices.get(pin)
             if val is None:
@@ -336,11 +408,51 @@ class HomeTab(QWidget):
             prev = self._prev_devices.get(pin)
             if prev == 1 and cur == 0:
                 self._stat_counts[kind] += 1
+                co_thay_doi = True
             self._prev_devices[pin] = cur
 
+        self._hien_thi_thong_ke()
+        # SUA: THEM MOI - CHI ghi file khi THAT SU co thay doi (tang so dem),
+        # tranh ghi o dia lien tuc moi 3s (chu ky poll) mot cach vo ich.
+        if co_thay_doi:
+            self._luu_thong_ke()
+
+    def _hien_thi_thong_ke(self):
         self.lbl_stat_an.setText(str(self._stat_counts["cho_an"]))
         self.lbl_stat_tam.setText(str(self._stat_counts["tam"]))
         self.lbl_stat_vs.setText(str(self._stat_counts["rua_chuong"]))
+
+    def _doc_thong_ke_da_luu(self):
+        """SUA: THEM MOI - doc lai file daily_stats.json (neu co) luc mo
+        app. CHI ap dung so dem neu dung NGAY HOM NAY luu (qua ngay moi thi
+        thoi diem doi ngay trong _cap_nhat_thong_ke() se tu reset ve 0, day
+        la hanh vi DUNG - khong phai bug)."""
+        try:
+            with open(DAILY_STATS_PATH, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if data.get("date") == time.strftime("%Y-%m-%d"):
+                self._stat_date = data["date"]
+                self._stat_counts = {
+                    "cho_an": int(data.get("cho_an", 0)),
+                    "tam": int(data.get("tam", 0)),
+                    "rua_chuong": int(data.get("rua_chuong", 0)),
+                }
+            # Neu file luu tu ngay KHAC hom nay -> bo qua, giu nguyen mac
+            # dinh 0 (_stat_date=None se tu kich hoat reset dung luc o
+            # _cap_nhat_thong_ke() khi co du lieu poll dau tien).
+        except FileNotFoundError:
+            pass  # Chua tung luu lan nao - binh thuong, giu mac dinh 0
+        except (json.JSONDecodeError, KeyError, ValueError, TypeError) as e:
+            print(f"[HomeTab] File daily_stats.json bi loi/hong, bo qua: {e}")
+
+    def _luu_thong_ke(self):
+        """SUA: THEM MOI - ghi thong ke hien tai xuong dia, de tat/mo lai
+        app trong CUNG 1 ngay van giu dung so dem, khong ve 0."""
+        try:
+            with open(DAILY_STATS_PATH, "w", encoding="utf-8") as f:
+                json.dump({"date": self._stat_date, **self._stat_counts}, f, ensure_ascii=False, indent=2)
+        except OSError as e:
+            print(f"[HomeTab] Khong ghi duoc daily_stats.json: {e}")
 
     # ------------------------------------------------------------------
     def _tick(self):
@@ -353,3 +465,10 @@ class HomeTab(QWidget):
             self.dot_system.set_on(False)
             self.lbl_state.setText("MẤT KẾT NỐI DỮ LIỆU")
             self.lbl_state.setStyleSheet("color:#c0392b; font-weight:700;")
+            # SUA: THEM MOI - day la mat ket noi TOI NGUON DANG CHON (co
+            # the Cloud hoac Local, tuy nguoi dung dang dieu khien qua dau)
+            # - KHAC voi "ESP32 MAT KET NOI CLOUD" (luon cu the la Cloud) o
+            # update_from_blynk(), nen an goi y "chuyen sang Local" o day
+            # de tranh nham lan (vi neu dang O Local roi ma van mat thi goi
+            # y do khong con dung nua).
+            self.lbl_hint.setVisible(False)

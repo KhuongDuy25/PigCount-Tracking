@@ -1,0 +1,10 @@
+{
+  "sued_on_temp": 25,
+  "sued_off_temp": 29,
+  "quat_on_temp": 31,
+  "quat_off_temp": 30,
+  "hutam_on": 70,
+  "hutam_off": 65,
+  "phunsuong_on": 55,
+  "phunsuong_off": 60
+}

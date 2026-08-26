@@ -1,123 +1,150 @@
 # -*- coding: utf-8 -*-
 """
-scheduler.py — Bộ lịch hẹn giờ chạy nền (AutoScheduler)
-===========================================================
-Đây là phần trả lời trực tiếp câu hỏi: "đang AUTO, bấm tay đèn lúc 16:59,
-đến 19h (giờ đã hẹn) thì sẽ ra sao?"
+scheduler.py — Dong bo lich hen gio + nguong moi truong xuong ESP32 (V16/V17)
+===============================================================================
+KIEN TRUC (Huong B): Python KHONG tu dem gio va tu ban lenh nua (cach cu
+phu thuoc may tinh/app phai luon mo - da bo). Thay vao do:
 
-QUY TẮC ÁP DỤNG (giống 1 CHIẾC ĐỒNG HỒ BÁO THỨC, không phải 1 LUẬT LIÊN TỤC):
-  Mỗi dòng lịch là 1 THỜI ĐIỂM KÍCH HOẠT CỐ ĐỊNH. Đến đúng giờ:phút đã cài,
-  scheduler gửi lệnh xuống ESP32 y hệt như vừa có người bấm nút — BẤT KỂ
-  trước đó thiết bị đang ở trạng thái nào (do tay bấm hay do gì khác).
+  1. Python chi dong vai tro "nguoi soan lich": gom toan bo lich tu
+     SettingTab, dong goi thanh 1 chuoi JSON, gui 1 LAN vao Vpin V16 moi
+     khi nguoi dung them/sua/xoa xong (bam BACK).
+  2. ESP32 (chip chinh) nhan JSON nay, luu vao NVS (giu duoc qua mat dien),
+     va TU dung NTP de so gio, TU kich hoat - hoan toan doc lap voi may
+     tinh co bat hay khong. Xem kiemTraLichHenGio() trong
+     ChipChinh_ESP32S3.ino.
 
-  => Ví dụ cụ thể của bạn: đèn hẹn BẬT lúc 19:00, bạn bấm tay BẬT đèn lúc
-     16:59. Đến đúng 19:00, scheduler vẫn gửi lệnh BẬT xuống — vì đèn đã
-     bật sẵn nên không có gì thay đổi (lệnh trùng trạng thái, vô hại).
-     Nhưng nếu giữa 16:59 và 19:00 bạn lỡ tắt đèn đi, thì đúng 19:00 lịch
-     vẫn sẽ BẬT LẠI như đã hẹn — lịch luôn "thắng" tại đúng thời điểm của nó,
-     không quan tâm tay đã làm gì trước đó. Tương tự cho "giờ tắt" của đèn.
+  Tuong tu, nguong moi truong (SettingTab -> ENV_ROWS) duoc gui vao V17.
 
-  => Với Bơm tắm / Bơm rửa sàn (bật rồi tự tắt sau X giây): đến giờ hẹn,
-     scheduler BẬT bơm rồi tự đếm đúng X giây cấu hình rồi TẮT — không quan
-     tâm bạn đã bấm tay bật/tắt gì trước đó trong khoảng thời gian đó.
+CAP NHAT: SettingTab (qua ScheduleSection/LightScheduleSection) gio DA co
+o chon "thu trong tuan" rieng cho tung dong lich - moi dong (row) tu
+get_schedule() tra ve them field "thu" (list so 1..7, 1=Thu 2...7=Chu
+nhat). build_schedule_json() ben duoi doc THANG tu do, KHONG con gan cung
+ALL_WEEKDAYS nua. De tuong thich nguoc voi du lieu cu (file
+schedule_config.json luu tu truoc khi co tinh nang nay, chua co key
+"thu"), dung row.get("thu", ALL_WEEKDAYS) - mac dinh chay Hang ngay neu
+thieu du lieu.
 
-  => Với Cho ăn (nút xung V6): đến giờ hẹn, scheduler KHÔNG tự ghi V4 rồi
-     đoán thời gian bấm V6 nữa — mà gọi qua `FeedCoordinator` dùng chung
-     với nút "CHO ĂN" tay ở tab MANUAL. FeedCoordinator dùng 1 khóa duy
-     nhất (chỉ 1 lệnh cho ăn chạy tại 1 thời điểm, dù là tay hay tự động)
-     và XÁC NHẬN THẬT giá trị V4 đã tới Blynk Cloud trước khi bấm V6 —
-     xem chi tiết trong feed_coordinator.py.
-
-CHỐNG BẮN TRÙNG LỊCH NHIỀU LẦN TRONG CÙNG 1 PHÚT:
-  Scheduler kiểm tra mỗi 15 giây (nhanh hơn 1 phút), nên mỗi mốc giờ:phút có
-  thể bị quét trúng 3-4 lần liên tiếp trong đúng phút đó. Để tránh gửi lệnh
-  lặp lại, mỗi lần kích hoạt được đánh dấu bằng 1 "khóa" duy nhất theo
-  (loại lịch, số thứ tự dòng, ngày giờ phút) — chỉ bắn đúng 1 lần cho mỗi
-  khóa, dù có quét trúng bao nhiêu lần trong phút đó.
+`next_upcoming()` chi la UOC TINH client-side de hien thi cho nguoi dung
+xem truoc tren tab HOME - viec THUC THI THAT SU do chinh ESP32 tu lam
+bang NTP, khong phu thuoc gi vao ham nay.
 """
 
-from PyQt5.QtCore import QObject, QTimer, QDateTime, pyqtSignal
+import json
+from PyQt5.QtCore import QObject, QTime, pyqtSignal
+
+ALL_WEEKDAYS = [1, 2, 3, 4, 5, 6, 7]
 
 
-class AutoScheduler(QObject):
-    """Bộ đếm giờ chạy nền, đối chiếu đồng hồ hệ thống với lịch đã cài trong
-    SettingTab, tự động gửi lệnh xuống ESP32 qua BlynkClient khi tới giờ."""
+class ScheduleSyncer(QObject):
+    """Gom lich/nguong tu SettingTab, dong goi JSON, gui xuong ESP32 qua
+    V16 (lich) / V17 (nguong moi truong). CHI gui khi co thay doi that su
+    (nguoi dung bam BACK sau khi sua), KHONG tu chay dem gio nao ca."""
 
-    schedule_fired = pyqtSignal(str)  # phát ra log dễ đọc mỗi khi có 1 lịch kích hoạt
+    sync_status = pyqtSignal(str)  # log de doc, co the noi vao 1 label/status bar
 
-    def __init__(self, setting_tab, blynk_client, feed_coordinator, check_interval_sec=15, parent=None):
+    def __init__(self, setting_tab, blynk_client, parent=None):
         super().__init__(parent)
         self.setting_tab = setting_tab
         self.blynk = blynk_client
-        self.feed_coordinator = feed_coordinator
 
-        self._fired_keys = set()  # chống bắn trùng trong cùng 1 phút (xem ghi chú ở đầu file)
+    # ---------------------------------------------------------- V16
+    def build_schedule_json(self):
+        raw = self.setting_tab.get_all_schedules()
+        items = []
+        next_id = 1
 
-        self.timer = QTimer(self)
-        self.timer.timeout.connect(self._check_all)
-        self.timer.start(check_interval_sec * 1000)
+        for row in raw.get("cho_an", []):
+            items.append({
+                "id": next_id, "loai": "cho_an",
+                "gio": row["gio"], "phut": row["phut"],
+                "thu": row.get("thu", ALL_WEEKDAYS), "gram": row["value"],
+            })
+            next_id += 1
 
-    # ------------------------------------------------------------------
-    def _check_all(self):
-        now = QDateTime.currentDateTime()
-        hh, mm = now.time().hour(), now.time().minute()
-        minute_key = now.toString("yyyy-MM-dd HH:mm")
+        for row in raw.get("tam", []):
+            items.append({
+                "id": next_id, "loai": "tam",
+                "gio": row["gio"], "phut": row["phut"],
+                "thu": row.get("thu", ALL_WEEKDAYS), "duration": row["value"],
+            })
+            next_id += 1
 
-        schedules = self.setting_tab.get_all_schedules()
+        for row in raw.get("rua_chuong", []):
+            items.append({
+                "id": next_id, "loai": "rua_chuong",
+                "gio": row["gio"], "phut": row["phut"],
+                "thu": row.get("thu", ALL_WEEKDAYS), "duration": row["value"],
+            })
+            next_id += 1
 
-        for i, row in enumerate(schedules.get("cho_an", [])):
-            if row["gio"] == hh and row["phut"] == mm:
-                self._fire_once(f"cho_an_{i}_{minute_key}", self._fire_feed, row["value"])
+        for row in raw.get("den", []):
+            items.append({
+                "id": next_id, "loai": "den",
+                "gio_bat": row["gio_bat"], "phut_bat": row["phut_bat"],
+                "gio_tat": row["gio_tat"], "phut_tat": row["phut_tat"],
+                "thu": row.get("thu", ALL_WEEKDAYS),
+            })
+            next_id += 1
 
-        for i, row in enumerate(schedules.get("tam", [])):
-            if row["gio"] == hh and row["phut"] == mm:
-                self._fire_once(f"tam_{i}_{minute_key}", self._fire_pump, "V13", "Tắm", row["value"])
+        return json.dumps(items, ensure_ascii=False)
 
-        for i, row in enumerate(schedules.get("rua_chuong", [])):
-            if row["gio"] == hh and row["phut"] == mm:
-                self._fire_once(f"rua_{i}_{minute_key}", self._fire_pump, "V12", "Rửa chuồng", row["value"])
+    def push_schedule(self):
+        """Goi khi nguoi dung bam BACK sau khi sua lich (SettingTab)."""
+        payload = self.build_schedule_json()
+        so_muc = payload.count('"id"')
 
-        for i, row in enumerate(schedules.get("den", [])):
-            if row["gio_bat"] == hh and row["phut_bat"] == mm:
-                self._fire_once(f"den_on_{i}_{minute_key}", self._fire_light, True)
-            if row["gio_tat"] == hh and row["phut_tat"] == mm:
-                self._fire_once(f"den_off_{i}_{minute_key}", self._fire_light, False)
+        def on_done(ok):
+            if ok:
+                self.sync_status.emit(f"Da gui lich xuong ESP32 (V16), {so_muc} muc.")
+            else:
+                self.sync_status.emit("Loi: gui lich that bai, kiem tra ket noi mang/Blynk.")
 
-        # dọn bớt để tránh set phình to vô hạn sau nhiều ngày chạy liên tục
-        if len(self._fired_keys) > 3000:
-            self._fired_keys.clear()
+        self.blynk.set_pin_async("V16", payload, callback=on_done)
 
-    def _fire_once(self, key, func, *args):
-        if key in self._fired_keys:
-            return  # đã bắn lịch này trong đúng phút này rồi, không bắn lại
-        self._fired_keys.add(key)
-        func(*args)
+    # ---------------------------------------------------------- V17
+    def push_env(self):
+        """Goi khi nguoi dung bam BACK sau khi sua nguong moi truong."""
+        payload = json.dumps(self.setting_tab.get_env_values(), ensure_ascii=False)
 
-    # ---------------------------------------------------------- cho ăn
-    def _fire_feed(self, gram):
-        self.schedule_fired.emit(f"⏰ Lịch CHO ĂN kích hoạt: {gram} gram (đang xác nhận qua FeedCoordinator...)")
+        def on_done(ok):
+            self.sync_status.emit("Da gui nguong moi truong xuong ESP32 (V17)." if ok
+                                   else "Loi: gui nguong moi truong that bai.")
 
-        def on_status(ok, message):
-            self.schedule_fired.emit(message)
+        self.blynk.set_pin_async("V17", payload, callback=on_done)
 
-        self.feed_coordinator.trigger_feed_async(gram, source_label="Lịch tự động", on_status=on_status)
+    # ---------------------------------------------------------- HOME
+    def next_upcoming(self):
+        """Tinh muc lich GAN NHAT sap toi (dua tren dong ho MAY TINH, chi
+        mang tinh DU DOAN de hien thi cho nguoi dung xem truoc)."""
+        now = QTime.currentTime()
+        now_minutes = now.hour() * 60 + now.minute()
 
-    # ------------------------------------------------------ bơm (tắm/rửa)
-    def _fire_pump(self, pin, ten_thiet_bi, duration_sec):
-        self.schedule_fired.emit(f"⏰ Lịch {ten_thiet_bi.upper()} kích hoạt: BẬT trong {duration_sec}s")
-        self.blynk.set_pin_async(pin, 1)
-        QTimer.singleShot(int(duration_sec * 1000), lambda: self._turn_off_pump(pin, ten_thiet_bi))
+        candidates = []  # (phut_trong_ngay, nhan_hien_thi)
+        raw = self.setting_tab.get_all_schedules()
 
-    def _turn_off_pump(self, pin, ten_thiet_bi):
-        self.schedule_fired.emit(f"⏰ Lịch {ten_thiet_bi.upper()}: đã hết {ten_thiet_bi.lower()} theo giờ, TẮT")
-        self.blynk.set_pin_async(pin, 0)
+        icon_map = {"cho_an": "Cho an", "tam": "Tam", "rua_chuong": "Rua chuong"}
+        for loai, nhan in icon_map.items():
+            for row in raw.get(loai, []):
+                candidates.append((
+                    row["gio"] * 60 + row["phut"],
+                    f"{nhan} luc {row['gio']:02d}:{row['phut']:02d}"
+                ))
 
-    # --------------------------------------------------------------- đèn
-    def _fire_light(self, turn_on):
-        trang_thai = "BẬT" if turn_on else "TẮT"
-        self.schedule_fired.emit(f"⏰ Lịch ĐÈN kích hoạt: {trang_thai}")
-        self.blynk.set_pin_async("V9", 1 if turn_on else 0)
+        for row in raw.get("den", []):
+            candidates.append((
+                row["gio_bat"] * 60 + row["phut_bat"],
+                f"Den BAT luc {row['gio_bat']:02d}:{row['phut_bat']:02d}"
+            ))
+            candidates.append((
+                row["gio_tat"] * 60 + row["phut_tat"],
+                f"Den TAT luc {row['gio_tat']:02d}:{row['phut_tat']:02d}"
+            ))
 
-    # ------------------------------------------------------------------
-    def stop(self):
-        self.timer.stop()
+        if not candidates:
+            return "Chua co lich nao duoc cai dat"
+
+        future_today = [c for c in candidates if c[0] > now_minutes]
+        if future_today:
+            return min(future_today, key=lambda c: c[0])[1]
+
+        return min(candidates, key=lambda c: c[0])[1] + " (ngay mai)"
