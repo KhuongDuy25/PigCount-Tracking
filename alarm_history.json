@@ -1,55 +1,5 @@
 [
   {
-    "thoi_gian": "08-27-2026 00:59:38",
-    "noi_dung": "Da gui lich xuong ESP32 (V16), 5 muc.",
-    "trang_thai": "Đồng bộ"
-  },
-  {
-    "thoi_gian": "08-27-2026 00:59:04",
-    "noi_dung": "Da gui lich xuong ESP32 (V16), 5 muc.",
-    "trang_thai": "Đồng bộ"
-  },
-  {
-    "thoi_gian": "08-27-2026 00:57:05",
-    "noi_dung": "Đang ở chế độ MANUAL và độ ẩm 87% quá cao (ngưỡng bật hút ẩm 70%) — thiết bị tự động sẽ KHÔNG tự phản ứng, cần xử lý tay ngay.",
-    "trang_thai": "Cảnh báo MANUAL"
-  },
-  {
-    "thoi_gian": "08-27-2026 00:57:05",
-    "noi_dung": "[23/08 00:56:54] Bom rua chuong da het thoi gian chay (30s), da TU TAT!",
-    "trang_thai": "Từ ESP32"
-  },
-  {
-    "thoi_gian": "08-26-2026 10:40:46",
-    "noi_dung": "Da gui lich xuong ESP32 (V16), 5 muc.",
-    "trang_thai": "Đồng bộ"
-  },
-  {
-    "thoi_gian": "08-26-2026 10:39:25",
-    "noi_dung": "Da gui lich xuong ESP32 (V16), 5 muc.",
-    "trang_thai": "Đồng bộ"
-  },
-  {
-    "thoi_gian": "08-26-2026 10:38:42",
-    "noi_dung": "Đang ở chế độ MANUAL và độ ẩm 87% quá cao (ngưỡng bật hút ẩm 70%) — thiết bị tự động sẽ KHÔNG tự phản ứng, cần xử lý tay ngay.",
-    "trang_thai": "Cảnh báo MANUAL"
-  },
-  {
-    "thoi_gian": "08-26-2026 10:38:42",
-    "noi_dung": "[23/08 00:56:54] Bom rua chuong da het thoi gian chay (30s), da TU TAT!",
-    "trang_thai": "Từ ESP32"
-  },
-  {
-    "thoi_gian": "08-26-2026 10:06:05",
-    "noi_dung": "Đang ở chế độ MANUAL và độ ẩm 87% quá cao (ngưỡng bật hút ẩm 70%) — thiết bị tự động sẽ KHÔNG tự phản ứng, cần xử lý tay ngay.",
-    "trang_thai": "Cảnh báo MANUAL"
-  },
-  {
-    "thoi_gian": "08-26-2026 10:06:05",
-    "noi_dung": "[23/08 00:56:54] Bom rua chuong da het thoi gian chay (30s), da TU TAT!",
-    "trang_thai": "Từ ESP32"
-  },
-  {
     "thoi_gian": "08-26-2026 01:03:45",
     "noi_dung": "Da gui nguong moi truong xuong ESP32 (V17).",
     "trang_thai": "Đồng bộ"

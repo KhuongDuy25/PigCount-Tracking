@@ -15,14 +15,10 @@ phu thuoc may tinh/app phai luon mo - da bo). Thay vao do:
 
   Tuong tu, nguong moi truong (SettingTab -> ENV_ROWS) duoc gui vao V17.
 
-CAP NHAT: SettingTab (qua ScheduleSection/LightScheduleSection) gio DA co
-o chon "thu trong tuan" rieng cho tung dong lich - moi dong (row) tu
-get_schedule() tra ve them field "thu" (list so 1..7, 1=Thu 2...7=Chu
-nhat). build_schedule_json() ben duoi doc THANG tu do, KHONG con gan cung
-ALL_WEEKDAYS nua. De tuong thich nguoc voi du lieu cu (file
-schedule_config.json luu tu truoc khi co tinh nang nay, chua co key
-"thu"), dung row.get("thu", ALL_WEEKDAYS) - mac dinh chay Hang ngay neu
-thieu du lieu.
+CHU Y: SettingTab hien CHUA co o chon "thu trong tuan" rieng cho tung
+dong lich (moi dong ap dung CHO MOI NGAY). Vi vay truong "thu" trong JSON
+gui di luon la [1..7] (du 7 ngay). Neu sau nay SettingTab bo sung chon
+thu, chi can sua ham build_schedule_json() de doc them du lieu do.
 
 `next_upcoming()` chi la UOC TINH client-side de hien thi cho nguoi dung
 xem truoc tren tab HOME - viec THUC THI THAT SU do chinh ESP32 tu lam
@@ -57,7 +53,7 @@ class ScheduleSyncer(QObject):
             items.append({
                 "id": next_id, "loai": "cho_an",
                 "gio": row["gio"], "phut": row["phut"],
-                "thu": row.get("thu", ALL_WEEKDAYS), "gram": row["value"],
+                "thu": ALL_WEEKDAYS, "gram": row["value"],
             })
             next_id += 1
 
@@ -65,7 +61,7 @@ class ScheduleSyncer(QObject):
             items.append({
                 "id": next_id, "loai": "tam",
                 "gio": row["gio"], "phut": row["phut"],
-                "thu": row.get("thu", ALL_WEEKDAYS), "duration": row["value"],
+                "thu": ALL_WEEKDAYS, "duration": row["value"],
             })
             next_id += 1
 
@@ -73,7 +69,7 @@ class ScheduleSyncer(QObject):
             items.append({
                 "id": next_id, "loai": "rua_chuong",
                 "gio": row["gio"], "phut": row["phut"],
-                "thu": row.get("thu", ALL_WEEKDAYS), "duration": row["value"],
+                "thu": ALL_WEEKDAYS, "duration": row["value"],
             })
             next_id += 1
 
@@ -82,7 +78,7 @@ class ScheduleSyncer(QObject):
                 "id": next_id, "loai": "den",
                 "gio_bat": row["gio_bat"], "phut_bat": row["phut_bat"],
                 "gio_tat": row["gio_tat"], "phut_tat": row["phut_tat"],
-                "thu": row.get("thu", ALL_WEEKDAYS),
+                "thu": ALL_WEEKDAYS,
             })
             next_id += 1
 

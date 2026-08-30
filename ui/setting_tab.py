@@ -24,7 +24,7 @@ from PyQt5.QtWidgets import (
     QSpinBox, QPushButton, QScrollArea, QStackedWidget, QFrame
 )
 
-from ui.schedule_section import ScheduleSection, LightScheduleSection, format_days
+from ui.schedule_section import ScheduleSection, LightScheduleSection
 from ui.thin_status_bar import ThinStatusBar
 from ui.style import COLOR_HEADER_BLUE, COLOR_HEADER_BLUE_DARK, COLOR_ON_GREEN, COLOR_ALARM_RED, COLOR_TEXT_DARK, COLOR_BG_CREAM
 
@@ -83,13 +83,10 @@ SCHEDULE_CATEGORIES = [
 ]
 
 
-def build_schedule_card(title, unit, color, bg, rows, extra_note=None):
+def build_schedule_card(title, unit, color, bg, rows):
     """Dựng 1 thẻ (card) hiển thị lịch cho 1 loại hoạt động, đẹp hơn hẳn so với
     kiểu liệt kê chữ đơn giản trước đây — mỗi mốc giờ là 1 "chip" màu + dòng
-    riêng biệt, có viền và màu nền theo từng loại hoạt động.
-
-    extra_note: dòng ghi chú phụ hiển thị ngay dưới tiêu đề (vd "Cách nhau
-    tối thiểu: 5 phút" cho Cho ăn) - bỏ qua nếu None."""
+    riêng biệt, có viền và màu nền theo từng loại hoạt động."""
     card = QFrame()
     card.setStyleSheet(
         f"QFrame {{ background:{bg}; border:1px solid {color}; border-radius:0px; }}"
@@ -103,11 +100,6 @@ def build_schedule_card(title, unit, color, bg, rows, extra_note=None):
         f"font-weight:800; font-size:16px; color:{color}; background:transparent; border:none; letter-spacing:0.5px;"
     )
     lay.addWidget(header)
-
-    if extra_note:
-        note_lbl = QLabel(extra_note)
-        note_lbl.setStyleSheet("font-size:13px; font-style:italic; color:#666; background:transparent; border:none;")
-        lay.addWidget(note_lbl)
 
     if not rows:
         empty = QLabel("Chưa có lịch nào được cài đặt")
@@ -141,14 +133,6 @@ def build_schedule_card(title, unit, color, bg, rows, extra_note=None):
             row_lay.addWidget(value_lbl)
 
             row_lay.addStretch(1)
-
-            # SUA: THEM MOI - hien thi "thu ap dung" (vd "Hang ngay", "T2 -
-            # T6"...) ben phai moi dong, doc tu field "thu" (list so 1..7).
-            # dung .get() de tuong thich nguoc voi du lieu cu chua co "thu".
-            day_lbl = QLabel(format_days(r.get("thu", list(range(1, 8)))))
-            day_lbl.setStyleSheet(f"font-size:13px; font-style:italic; color:{color}; background:transparent; border:none;")
-            row_lay.addWidget(day_lbl)
-
             lay.addWidget(row_frame)
 
     lay.addStretch(1)
@@ -202,12 +186,6 @@ def build_light_schedule_card(rows):
             row_lay.addWidget(arrow2)
 
             row_lay.addStretch(1)
-
-            # SUA: THEM MOI - hien thi "thu ap dung" giong build_schedule_card().
-            day_lbl = QLabel(format_days(r.get("thu", list(range(1, 8)))))
-            day_lbl.setStyleSheet(f"font-size:13px; font-style:italic; color:{color}; background:transparent; border:none;")
-            row_lay.addWidget(day_lbl)
-
             lay.addWidget(row_frame)
 
     lay.addStretch(1)
@@ -463,21 +441,11 @@ class SettingTab(QWidget):
     def _rows_to_tuples(saved_rows, keys, fallback):
         """Doi list[dict] (dinh dang luu trong file/get_schedule()) thanh
         list[tuple] (dinh dang ScheduleSection/LightScheduleSection can de
-        khoi tao qua default_rows). Neu du lieu rong/hong, dung fallback.
-
-        SUA: THEM MOI - key "thu" duoc doc bang .get() thay vi [] truc
-        tiep, vi file schedule_config.json luu tu TRUOC KHI co tinh nang
-        chon thu se KHONG co key nay - truong hop do tra ve None cho tung
-        dong (ScheduleSection/LightScheduleSection tu hieu None = mac dinh
-        chay Hang ngay), thay vi lam ca dong bi rot ve fallback oan uong."""
+        khoi tao qua default_rows). Neu du lieu rong/hong, dung fallback."""
         if not saved_rows:
             return fallback
         try:
-            result = []
-            for row in saved_rows:
-                values = [row.get(k) if k == "thu" else row[k] for k in keys]
-                result.append(tuple(values))
-            return result
+            return [tuple(row[k] for k in keys) for row in saved_rows]
         except (KeyError, TypeError) as e:
             print(f"[SettingTab] Du lieu lich luu bi loi dinh dang, dung mac dinh: {e}")
             return fallback
@@ -497,10 +465,7 @@ class SettingTab(QWidget):
         }
 
         for key, title, unit, color, bg in SCHEDULE_CATEGORIES:
-            extra_note = None
-            if key == "cho_an" and hasattr(self, "sec_feed"):
-                extra_note = f"Cách nhau tối thiểu: {self.sec_feed.get_min_gap_minutes()} phút"
-            card = build_schedule_card(title, unit, color, bg, data_map[key], extra_note=extra_note)
+            card = build_schedule_card(title, unit, color, bg, data_map[key])
             self.schedule_cards_container.addWidget(card)
 
         # Đèn dùng định dạng dữ liệu khác (giờ bật/giờ tắt) nên dùng card riêng
@@ -653,12 +618,9 @@ class SettingTab(QWidget):
         self.sec_feed = ScheduleSection(
             "Cho ăn", "Khối lượng", "gram", (0, 2000),
             default_rows=self._rows_to_tuples(
-                self._saved_schedule.get("cho_an"), ("gio", "phut", "value", "thu"),
+                self._saved_schedule.get("cho_an"), ("gio", "phut", "value"),
                 fallback=[(6, 0, 100), (12, 0, 100), (18, 0, 100)]
-            ),
-            # SUA: THEM MOI - doc lai "khoang cach toi thieu" da luu tu lan
-            # truoc (neu co), mac dinh 5 phut neu chua tung luu gi.
-            min_gap_minutes=self._saved_schedule.get("cho_an_min_gap_phut", 5),
+            )
         )
         row.addWidget(self.sec_feed)
 
@@ -667,7 +629,7 @@ class SettingTab(QWidget):
         self.sec_tam = ScheduleSection(
             "Tắm", "Thời gian chạy", "giây", (0, 600),
             default_rows=self._rows_to_tuples(
-                self._saved_schedule.get("tam"), ("gio", "phut", "value", "thu"),
+                self._saved_schedule.get("tam"), ("gio", "phut", "value"),
                 fallback=[(8, 0, 80), (14, 0, 80)]
             ),
             is_duration_based=True,
@@ -678,7 +640,7 @@ class SettingTab(QWidget):
         self.sec_rua = ScheduleSection(
             "Rửa chuồng", "Thời gian chạy", "giây", (0, 600),
             default_rows=self._rows_to_tuples(
-                self._saved_schedule.get("rua_chuong"), ("gio", "phut", "value", "thu"),
+                self._saved_schedule.get("rua_chuong"), ("gio", "phut", "value"),
                 fallback=[(7, 0, 200), (19, 0, 200)]
             ),
             is_duration_based=True,
@@ -688,7 +650,7 @@ class SettingTab(QWidget):
         # Đèn: theo cặp GIỜ BẬT / GIỜ TẮT (không có thời lượng như 3 loại trên)
         self.sec_den = LightScheduleSection(
             default_rows=self._rows_to_tuples(
-                self._saved_schedule.get("den"), ("gio_bat", "phut_bat", "gio_tat", "phut_tat", "thu"),
+                self._saved_schedule.get("den"), ("gio_bat", "phut_bat", "gio_tat", "phut_tat"),
                 fallback=[(18, 0, 22, 0)]
             )
         )
@@ -738,9 +700,6 @@ class SettingTab(QWidget):
     def get_all_schedules(self):
         return {
             "cho_an": self.sec_feed.get_schedule(),
-            # SUA: THEM MOI - luu kem "khoang cach toi thieu" nguoi dung da
-            # cai cho Cho an, de khong bi mat khi tat/mo lai app.
-            "cho_an_min_gap_phut": self.sec_feed.get_min_gap_minutes(),
             "tam": self.sec_tam.get_schedule(),
             "rua_chuong": self.sec_rua.get_schedule(),
             "den": self.sec_den.get_schedule(),

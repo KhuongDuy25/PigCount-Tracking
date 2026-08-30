@@ -3,61 +3,21 @@
     {
       "gio": 13,
       "phut": 24,
-      "value": 5,
-      "thu": [
-        1,
-        2,
-        3,
-        4,
-        5,
-        6,
-        7
-      ]
-    },
-    {
-      "gio": 6,
-      "phut": 3,
-      "value": 1,
-      "thu": [
-        1,
-        2,
-        3,
-        4,
-        5,
-        6,
-        7
-      ]
+      "value": 5
     }
   ],
-  "cho_an_min_gap_phut": 2,
   "tam": [
     {
       "gio": 13,
       "phut": 25,
-      "value": 10,
-      "thu": [
-        1,
-        2,
-        3,
-        4,
-        7
-      ]
+      "value": 10
     }
   ],
   "rua_chuong": [
     {
       "gio": 6,
       "phut": 0,
-      "value": 10,
-      "thu": [
-        1,
-        2,
-        3,
-        4,
-        5,
-        6,
-        7
-      ]
+      "value": 10
     }
   ],
   "den": [
@@ -65,16 +25,7 @@
       "gio_bat": 18,
       "phut_bat": 0,
       "gio_tat": 21,
-      "phut_tat": 0,
-      "thu": [
-        1,
-        2,
-        3,
-        4,
-        5,
-        6,
-        7
-      ]
+      "phut_tat": 0
     }
   ]
 }
