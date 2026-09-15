@@ -150,6 +150,16 @@ QLabel[role="statusbarValue"] {{
     font-family: "{FONT_MONO}", "Consolas", monospace;
 }}
 
+/* SUA: THEM MOI - phien ban CANH BAO (do) cua statusbarValue, dung khi cam
+ton thap / nuoc can - GIU NGUYEN font-size/font-weight/font-family, CHI doi
+mau, de khong bi "nhay" kich thuoc chu khi chuyen qua lai giua 2 trang thai. */
+QLabel[role="statusbarValueWarning"] {{
+    color: {COLOR_ALARM_RED};
+    font-size: 13px;
+    font-weight: 700;
+    font-family: "{FONT_MONO}", "Consolas", monospace;
+}}
+
 QFrame#statusbarDivider {{
     background-color: {COLOR_STATUSBAR_DIVIDER};
     max-width: 1px;
